@@ -20,6 +20,8 @@
 
 #include <bdk.h>
 
+#include <libs/compr/lz4.h>
+
 #define EMMC_32GB_GPP_SEC_CNT 0x3A3E000
 #define EMMC_64GB_GPP_SEC_CNT 0x747C000
 

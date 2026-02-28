@@ -75,7 +75,7 @@ typedef struct _max77620_regulator_t
 
 static const max77620_regulator_t _pmic_regulators[] = {
 	{  "sd0",  12500, 600000,  625000, 1400000,  REGULATOR_SD,  MAX77620_REG_SD0,      MAX77620_REG_SD0_CFG,    MAX77620_SD0_VOLT_MASK,  {{ MAX77620_REG_FPS_SD0,  1, 7, 1 }} },
-	{  "sd1",  12500, 600000, 1125000, 1250000,  REGULATOR_SD,  MAX77620_REG_SD1,      MAX77620_REG_SD1_CFG,    MAX77620_SD1_VOLT_MASK,  {{ MAX77620_REG_FPS_SD1,  0, 1, 5 }} },
+	{  "sd1",  12500, 600000, 1125000, 1237500,  REGULATOR_SD,  MAX77620_REG_SD1,      MAX77620_REG_SD1_CFG,    MAX77620_SD1_VOLT_MASK,  {{ MAX77620_REG_FPS_SD1,  0, 1, 5 }} },
 	{  "sd2",  12500, 600000, 1325000, 1350000,  REGULATOR_SD,  MAX77620_REG_SD2,      MAX77620_REG_SD2_CFG,    MAX77620_SDX_VOLT_MASK,  {{ MAX77620_REG_FPS_SD2,  1, 5, 2 }} },
 	{  "sd3",  12500, 600000, 1800000, 1800000,  REGULATOR_SD,  MAX77620_REG_SD3,      MAX77620_REG_SD3_CFG,    MAX77620_SDX_VOLT_MASK,  {{ MAX77620_REG_FPS_SD3,  0, 3, 3 }} },
 	{ "ldo0",  25000, 800000, 1200000, 1200000,  REGULATOR_LDO, MAX77620_REG_LDO0_CFG, MAX77620_REG_LDO0_CFG2,  MAX77620_LDO_VOLT_MASK,  {{ MAX77620_REG_FPS_LDO0, 3, 7, 0 }} },
@@ -103,7 +103,7 @@ static u8 _max77812_get_address()
 		return max77812_i2c_addr;
 
 	max77812_i2c_addr =
-		!(FUSE(FUSE_RESERVED_ODM28_T210B01) & 1) ? MAX77812_PHASE31_CPU_I2C_ADDR : MAX77812_PHASE211_CPU_I2C_ADDR;
+		!(FUSE(FUSE_RESERVED_ODM28_B01) & 1) ? MAX77812_PHASE31_CPU_I2C_ADDR : MAX77812_PHASE211_CPU_I2C_ADDR;
 
 	return max77812_i2c_addr;
 }
@@ -123,7 +123,7 @@ static u8 _max7762x_get_i2c_address(u32 id)
 	case REGULATOR_BC1:
 		{
 		u8 reg_addr = _max77812_get_address();
-		if (id == REGULATOR_RAM1 && reg_addr == MAX77812_PHASE31_CPU_I2C_ADDR)
+		if (id == REGULATOR_RAM0 && reg_addr == MAX77812_PHASE31_CPU_I2C_ADDR)
 			reg_addr = 0;
 		return reg_addr;
 		}
@@ -327,7 +327,7 @@ void max77620_config_default()
 		return;
 
 	// Set default voltages and enable regulators.
-	for (u32 i = 1; i <= REGULATOR_LDO8; i++)
+	for (u32 i = REGULATOR_SD1; i <= REGULATOR_LDO8; i++)
 	{
 		max77620_regulator_config_fps(i);
 		max7762x_regulator_set_voltage(i, _pmic_regulators[i].uv_default);

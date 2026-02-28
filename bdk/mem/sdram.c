@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018 naehrwert
  * Copyright (c) 2018 balika011
- * Copyright (c) 2019-2023 CTCaer
+ * Copyright (c) 2019-2025 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -19,7 +19,7 @@
 #include <string.h>
 
 #include <mem/mc.h>
-#include <mem/emc.h>
+#include <mem/emc_t210.h>
 #include <mem/sdram.h>
 #include <mem/sdram_param_t210.h>
 #include <mem/sdram_param_t210b01.h>
@@ -34,16 +34,14 @@
 #include <soc/timer.h>
 #include <soc/t210.h>
 
-#define CONFIG_SDRAM_KEEP_ALIVE
-
 #define DRAM_ID(x) BIT(x)
 #define DRAM_CC(x) BIT(x)
 
 typedef struct _sdram_vendor_patch_t
 {
 	u32 val;
-	u32 offset:16;
 	u32 dramcf:16;
+	u32 offset:16;
 } sdram_vendor_patch_t;
 
 static const u8 dram_encoding_t210b01[] = {
@@ -67,21 +65,21 @@ static const u8 dram_encoding_t210b01[] = {
 /* 17 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AA_MGCL,
 /* 18 */	LPDDR4X_8GB_SAMSUNG_K4UBE3D4AA_MGCL,
 /* 19 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AA_MGCL,
-/* 20 */	LPDDR4X_4GB_SAMSUNG_1Z,
-/* 21 */	LPDDR4X_4GB_SAMSUNG_1Z,
-/* 22 */	LPDDR4X_4GB_SAMSUNG_1Z,
+/* 20 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AB_MGCL,
+/* 21 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AB_MGCL,
+/* 22 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AB_MGCL,
 /* 23 */	LPDDR4X_8GB_SAMSUNG_K4UBE3D4AA_MGCL,
 /* 24 */	LPDDR4X_4GB_SAMSUNG_K4U6E3S4AA_MGCL,
 /* 25 */	LPDDR4X_4GB_MICRON_MT53E512M32D2NP_046_WTF,
 /* 26 */	LPDDR4X_4GB_MICRON_MT53E512M32D2NP_046_WTF,
 /* 27 */	LPDDR4X_4GB_MICRON_MT53E512M32D2NP_046_WTF,
 /* 28 */	LPDDR4X_8GB_SAMSUNG_K4UBE3D4AA_MGCL,
-/* 29 */	LPDDR4X_4GB_HYNIX_1A,
-/* 30 */	LPDDR4X_4GB_HYNIX_1A,
-/* 31 */	LPDDR4X_4GB_HYNIX_1A,
-/* 32 */	LPDDR4X_4GB_MICRON_1A,
-/* 33 */	LPDDR4X_4GB_MICRON_1A,
-/* 34 */	LPDDR4X_4GB_MICRON_1A,
+/* 29 */	LPDDR4X_4GB_HYNIX_H54G46CYRBX267,
+/* 30 */	LPDDR4X_4GB_HYNIX_H54G46CYRBX267,
+/* 31 */	LPDDR4X_4GB_HYNIX_H54G46CYRBX267,
+/* 32 */	LPDDR4X_4GB_MICRON_MT53E512M32D1NP_046_WTB,
+/* 33 */	LPDDR4X_4GB_MICRON_MT53E512M32D1NP_046_WTB,
+/* 34 */	LPDDR4X_4GB_MICRON_MT53E512M32D1NP_046_WTB,
 };
 
 #include "sdram_config.inl"
@@ -127,14 +125,18 @@ static void _sdram_req_mrr_data(u32 data, bool dual_channel)
 emc_mr_data_t sdram_read_mrx(emc_mr_t mrx)
 {
 	emc_mr_data_t data;
-	u32 dual_channel = (EMC(EMC_FBIO_CFG7) >> 2) & 1;
+	u32 mrr;
+	bool dual_rank    = EMC(EMC_ADR_CFG) & 1;
+	bool dual_channel = (EMC(EMC_FBIO_CFG7) >> 2) & 1; // Each EMC channel is a RAM chip module.
 
 	// Clear left overs.
-	for (u32 i = 0; i < 32; i++)
+	for (u32 i = 0; i < 16; i++)
 	{
 		(void)EMC(EMC_MRR);
 		usleep(1);
 	}
+
+	memset(&data, 0xFF, sizeof(emc_mr_data_t));
 
 	/*
 	 * When a dram chip has only one rank, then the info from the 2 ranks differs.
@@ -143,21 +145,38 @@ emc_mr_data_t sdram_read_mrx(emc_mr_t mrx)
 
 	// Get Device 0 (Rank 0) info from both dram chips (channels).
 	_sdram_req_mrr_data((2u << 30) | (mrx << 16), dual_channel);
-	data.rank0_ch0 = EMC(EMC_MRR) & 0xFF;
-	data.rank0_ch1 = (EMC(EMC_MRR) & 0xFF00 >> 8);
+
+	// Ram module 0 info.
+	mrr = EMC_CH0(EMC_MRR);
+	data.chip0.rank0_ch0 = mrr & 0xFF;
+	data.chip0.rank0_ch1 = (mrr & 0xFF00 >> 8);
+
+	// Ram module 1 info.
+	if (dual_channel)
+	{
+		mrr = EMC_CH1(EMC_MRR);
+		data.chip1.rank0_ch0 = mrr & 0xFF;
+		data.chip1.rank0_ch1 = (mrr & 0xFF00 >> 8);
+	}
 
 	// If Rank 1 exists, get info.
-	if (EMC(EMC_ADR_CFG) & 1)
+	if (dual_rank)
 	{
 		// Get Device 1 (Rank 1) info from both dram chips (channels).
 		_sdram_req_mrr_data((1u << 30) | (mrx << 16), dual_channel);
-		data.rank1_ch0 = EMC(EMC_MRR) & 0xFF;
-		data.rank1_ch1 = (EMC(EMC_MRR) & 0xFF00 >> 8);
-	}
-	else
-	{
-		data.rank1_ch0 = 0xFF;
-		data.rank1_ch1 = 0xFF;
+
+		// Ram module 0 info.
+		mrr = EMC_CH0(EMC_MRR);
+		data.chip0.rank1_ch0 = mrr & 0xFF;
+		data.chip0.rank1_ch1 = (mrr & 0xFF00 >> 8);
+
+		// Ram module 1 info.
+		if (dual_channel)
+		{
+			mrr = EMC_CH1(EMC_MRR);
+			data.chip1.rank1_ch0 = mrr & 0xFF;
+			data.chip1.rank1_ch1 = (mrr & 0xFF00 >> 8);
+		}
 	}
 
 	return data;
@@ -165,14 +184,31 @@ emc_mr_data_t sdram_read_mrx(emc_mr_t mrx)
 
 static void _sdram_config_t210(const sdram_params_t210_t *params)
 {
+	// VDDP Select.
+	PMC(APBDEV_PMC_VDDP_SEL) = params->pmc_vddp_sel;
+	usleep(params->pmc_vddp_sel_wait);
+
+	// Set DDR pad voltage.
+	PMC(APBDEV_PMC_DDR_PWR) = PMC(APBDEV_PMC_DDR_PWR); // Normally params->pmc_ddr_pwr.
+
+	// Turn on MEM IO Power.
+	PMC(APBDEV_PMC_NO_IOPOWER) &= PMC_NO_IOPOWER_SDMMC1; // Only keep SDMMC1 state. (Was params->pmc_no_io_power).
+	PMC(APBDEV_PMC_REG_SHORT)   = params->pmc_reg_short;
+
+	PMC(APBDEV_PMC_DDR_CNTRL)   = params->pmc_ddr_ctrl;
+
+	// Patch 1 using BCT spare variables
+	if (params->emc_bct_spare0)
+		*(vu32 *)params->emc_bct_spare0 = params->emc_bct_spare1;
+
 	// Program DPD3/DPD4 regs (coldboot path).
 	// Enable sel_dpd on unused pins.
-	u32 dpd_req = (params->emc_pmc_scratch1 & 0x3FFFFFFF) | 0x80000000;
+	u32 dpd_req = (params->emc_pmc_scratch1 & 0x3FFFFFFF) | PMC_IO_DPD_REQ_DPD_ON;
 	PMC(APBDEV_PMC_IO_DPD3_REQ) = (dpd_req ^ 0xFFFF) & 0xC000FFFF;
 	usleep(params->pmc_io_dpd3_req_wait);
 
 	// Disable e_dpd_vttgen.
-	dpd_req = (params->emc_pmc_scratch2 & 0x3FFFFFFF) | 0x80000000;
+	dpd_req = (params->emc_pmc_scratch2 & 0x3FFFFFFF) | PMC_IO_DPD_REQ_DPD_ON;
 	PMC(APBDEV_PMC_IO_DPD4_REQ) = (dpd_req & 0xFFFF0000) ^ 0x3FFF0000;
 	usleep(params->pmc_io_dpd4_req_wait);
 
@@ -183,45 +219,42 @@ static void _sdram_config_t210(const sdram_params_t210_t *params)
 	PMC(APBDEV_PMC_WEAK_BIAS) = 0;
 	usleep(1);
 
-	// Start clocks.
+	// Start PLLM.
 	CLOCK(CLK_RST_CONTROLLER_PLLM_MISC1) = params->pllm_setup_control;
 	CLOCK(CLK_RST_CONTROLLER_PLLM_MISC2) = 0;
 
-#ifdef CONFIG_SDRAM_KEEP_ALIVE
-	CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) =
-		(params->pllm_feedback_divider << 8) | params->pllm_input_divider | ((params->pllm_post_divider & 0xFFFF) << 20) | PLLCX_BASE_ENABLE;
-#else
 	u32 pllm_div = (params->pllm_feedback_divider << 8) | params->pllm_input_divider | ((params->pllm_post_divider & 0xFFFF) << 20);
 	CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) = pllm_div;
-	CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) = pllm_div | PLLCX_BASE_ENABLE;
-#endif
+	CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) = pllm_div | PLL_BASE_ENABLE;
 
 	u32 wait_end = get_tmr_us() + 300;
-	while (!(CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) & 0x8000000))
+	while (!(CLOCK(CLK_RST_CONTROLLER_PLLM_BASE) & BIT(27)))
 	{
 		if (get_tmr_us() >= wait_end)
-			goto break_nosleep;
+			goto lock_timeout;
 	}
 	usleep(10);
 
-break_nosleep:
+lock_timeout:
+	// Set clock sources.
 	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) = ((params->mc_emem_arb_misc0 >> 11) & 0x10000) | (params->emc_clock_source & 0xFFFEFFFF);
 	if (params->emc_clock_source_dll)
 		CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC_DLL) = params->emc_clock_source_dll;
 	if (params->clear_clock2_mc1)
-		CLOCK(CLK_RST_CONTROLLER_CLK_ENB_W_CLR) = 0x40000000; // Clear Reset to MC1.
+		CLOCK(CLK_RST_CONTROLLER_CLK_ENB_W_CLR) = BIT(CLK_W_MC1); // Clear Reset to MC1.
 
 	// Enable and clear reset for memory clocks.
 	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_H_SET) = BIT(CLK_H_EMC) | BIT(CLK_H_MEM);
 	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_X_SET) = BIT(CLK_X_EMC_DLL);
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_H_CLR) = BIT(CLK_H_EMC) | BIT(CLK_H_MEM);
 
-	// Set pad macros.
+	// Set pad vtt levels.
 	EMC(EMC_PMACRO_VTTGEN_CTRL_0) = params->emc_pmacro_vttgen_ctrl0;
 	EMC(EMC_PMACRO_VTTGEN_CTRL_1) = params->emc_pmacro_vttgen_ctrl1;
 	EMC(EMC_PMACRO_VTTGEN_CTRL_2) = params->emc_pmacro_vttgen_ctrl2;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 	usleep(10); // Ensure the regulators settle.
 
 	// Select EMC write mux.
@@ -233,7 +266,7 @@ break_nosleep:
 
 	// Program CMD mapping. Required before brick mapping, else
 	// we can't guarantee CK will be differential at all times.
-	EMC(EMC_FBIO_CFG7) = params->emc_fbio_cfg7;
+	EMC(EMC_FBIO_CFG7)          = params->emc_fbio_cfg7;
 	EMC(EMC_CMD_MAPPING_CMD0_0) = params->emc_cmd_mapping_cmd0_0;
 	EMC(EMC_CMD_MAPPING_CMD0_1) = params->emc_cmd_mapping_cmd0_1;
 	EMC(EMC_CMD_MAPPING_CMD0_2) = params->emc_cmd_mapping_cmd0_2;
@@ -246,7 +279,7 @@ break_nosleep:
 	EMC(EMC_CMD_MAPPING_CMD3_0) = params->emc_cmd_mapping_cmd3_0;
 	EMC(EMC_CMD_MAPPING_CMD3_1) = params->emc_cmd_mapping_cmd3_1;
 	EMC(EMC_CMD_MAPPING_CMD3_2) = params->emc_cmd_mapping_cmd3_2;
-	EMC(EMC_CMD_MAPPING_BYTE) = params->emc_cmd_mapping_byte;
+	EMC(EMC_CMD_MAPPING_BYTE)   = params->emc_cmd_mapping_byte;
 
 	// Program brick mapping.
 	EMC(EMC_PMACRO_BRICK_MAPPING_0) = params->emc_pmacro_brick_mapping0;
@@ -258,6 +291,7 @@ break_nosleep:
 	// This is required to do any reads from the pad macros.
 	EMC(EMC_CONFIG_SAMPLE_DELAY) = params->emc_config_sample_delay;
 
+	// Set data pipes mode.
 	EMC(EMC_FBIO_CFG8) = params->emc_fbio_cfg8;
 
 	// Set swizzle for Rank 0.
@@ -275,12 +309,12 @@ break_nosleep:
 	if (params->emc_bct_spare6)
 		*(vu32 *)params->emc_bct_spare6 = params->emc_bct_spare7;
 
-	// Set pad controls.
+	// Program calibration impedance.
 	EMC(EMC_XM2COMPPADCTRL)  = params->emc_xm2_comp_pad_ctrl;
 	EMC(EMC_XM2COMPPADCTRL2) = params->emc_xm2_comp_pad_ctrl2;
 	EMC(EMC_XM2COMPPADCTRL3) = params->emc_xm2_comp_pad_ctrl3;
 
-	// Program Autocal controls with shadowed register fields.
+	// Program Autocal controls.
 	EMC(EMC_AUTO_CAL_CONFIG2) = params->emc_auto_cal_config2;
 	EMC(EMC_AUTO_CAL_CONFIG3) = params->emc_auto_cal_config3;
 	EMC(EMC_AUTO_CAL_CONFIG4) = params->emc_auto_cal_config4;
@@ -289,18 +323,21 @@ break_nosleep:
 	EMC(EMC_AUTO_CAL_CONFIG7) = params->emc_auto_cal_config7;
 	EMC(EMC_AUTO_CAL_CONFIG8) = params->emc_auto_cal_config8;
 
-	EMC(EMC_PMACRO_RX_TERM)    = params->emc_pmacro_rx_term;
-	EMC(EMC_PMACRO_DQ_TX_DRV)  = params->emc_pmacro_dq_tx_drive;
-	EMC(EMC_PMACRO_CA_TX_DRV)  = params->emc_pmacro_ca_tx_drive;
-	EMC(EMC_PMACRO_CMD_TX_DRV) = params->emc_pmacro_cmd_tx_drive;
+	// Program termination and drive strength
+	EMC(EMC_PMACRO_RX_TERM)            = params->emc_pmacro_rx_term;
+	EMC(EMC_PMACRO_DQ_TX_DRV)          = params->emc_pmacro_dq_tx_drive;
+	EMC(EMC_PMACRO_CA_TX_DRV)          = params->emc_pmacro_ca_tx_drive;
+	EMC(EMC_PMACRO_CMD_TX_DRV)         = params->emc_pmacro_cmd_tx_drive;
 	EMC(EMC_PMACRO_AUTOCAL_CFG_COMMON) = params->emc_pmacro_auto_cal_common;
-	EMC(EMC_AUTO_CAL_CHANNEL)  = params->emc_auto_cal_channel;
-	EMC(EMC_PMACRO_ZCTRL)      = params->emc_pmacro_zcrtl;
+	EMC(EMC_AUTO_CAL_CHANNEL)          = params->emc_auto_cal_channel;
+	EMC(EMC_PMACRO_ZCTRL)              = params->emc_pmacro_zcrtl;
 
+	// Program dll config.
 	EMC(EMC_DLL_CFG_0)     = params->emc_dll_cfg0;
 	EMC(EMC_DLL_CFG_1)     = params->emc_dll_cfg1;
 	EMC(EMC_CFG_DIG_DLL_1) = params->emc_cfg_dig_dll_1;
 
+	// Program barrelshift.
 	EMC(EMC_DATA_BRLSHFT_0) = params->emc_data_brlshft0;
 	EMC(EMC_DATA_BRLSHFT_1) = params->emc_data_brlshft1;
 	EMC(EMC_DQS_BRLSHFT_0)  = params->emc_dqs_brlshft0;
@@ -314,6 +351,7 @@ break_nosleep:
 	EMC(EMC_QUSE_BRLSHFT_2) = params->emc_quse_brlshft2;
 	EMC(EMC_QUSE_BRLSHFT_3) = params->emc_quse_brlshft3;
 
+	// Program pad macros controls and termination.
 	EMC(EMC_PMACRO_BRICK_CTRL_RFU1) = (params->emc_pmacro_brick_ctrl_rfu1 & 0x1BF01BF) | 0x1E401E40;
 	EMC(EMC_PMACRO_PAD_CFG_CTRL)    = params->emc_pmacro_pad_cfg_ctrl;
 
@@ -328,7 +366,8 @@ break_nosleep:
 	EMC(EMC_PMACRO_CMD_RX_TERM_MODE)     = params->emc_pmacro_cmd_rx_term_mode;
 	EMC(EMC_PMACRO_CMD_PAD_TX_CTRL)      = params->emc_pmacro_cmd_pad_tx_ctrl;
 
-	EMC(EMC_CFG_3) = params->emc_cfg3;
+	// Program pad macro pins/bytes.
+	EMC(EMC_CFG_3)                   = params->emc_cfg3;
 	EMC(EMC_PMACRO_TX_PWRD_0)        = params->emc_pmacro_tx_pwrd0;
 	EMC(EMC_PMACRO_TX_PWRD_1)        = params->emc_pmacro_tx_pwrd1;
 	EMC(EMC_PMACRO_TX_PWRD_2)        = params->emc_pmacro_tx_pwrd2;
@@ -348,12 +387,15 @@ break_nosleep:
 	EMC(EMC_PMACRO_CMD_CTRL_0)       = params->emc_pmacro_cmd_ctrl0;
 	EMC(EMC_PMACRO_CMD_CTRL_1)       = params->emc_pmacro_cmd_ctrl1;
 	EMC(EMC_PMACRO_CMD_CTRL_2)       = params->emc_pmacro_cmd_ctrl2;
+
+	// Program inbound vref setting.
 	EMC(EMC_PMACRO_IB_VREF_DQ_0)     = params->emc_pmacro_ib_vref_dq_0;
 	EMC(EMC_PMACRO_IB_VREF_DQ_1)     = params->emc_pmacro_ib_vref_dq_1;
 	EMC(EMC_PMACRO_IB_VREF_DQS_0)    = params->emc_pmacro_ib_vref_dqs_0;
 	EMC(EMC_PMACRO_IB_VREF_DQS_1)    = params->emc_pmacro_ib_vref_dqs_1;
 	EMC(EMC_PMACRO_IB_RXRT)          = params->emc_pmacro_ib_rxrt;
 
+	// Program quse trimmers.
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_0) = params->emc_pmacro_quse_ddll_rank0_0;
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_1) = params->emc_pmacro_quse_ddll_rank0_1;
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_2) = params->emc_pmacro_quse_ddll_rank0_2;
@@ -368,6 +410,7 @@ break_nosleep:
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK1_5) = params->emc_pmacro_quse_ddll_rank1_5;
 	EMC(EMC_PMACRO_BRICK_CTRL_RFU1)   = params->emc_pmacro_brick_ctrl_rfu1;
 
+	// Program outbound trimmers.
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_0) = params->emc_pmacro_ob_ddll_long_dq_rank0_0;
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_1) = params->emc_pmacro_ob_ddll_long_dq_rank0_1;
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_2) = params->emc_pmacro_ob_ddll_long_dq_rank0_2;
@@ -402,6 +445,7 @@ break_nosleep:
 	EMC(EMC_PMACRO_IB_DDLL_LONG_DQS_RANK1_2) = params->emc_pmacro_ib_ddll_long_dqs_rank1_2;
 	EMC(EMC_PMACRO_IB_DDLL_LONG_DQS_RANK1_3) = params->emc_pmacro_ib_ddll_long_dqs_rank1_3;
 
+	// Program clock trimmers.
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_0)  = params->emc_pmacro_ddll_long_cmd_0;
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_1)  = params->emc_pmacro_ddll_long_cmd_1;
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_2)  = params->emc_pmacro_ddll_long_cmd_2;
@@ -418,7 +462,8 @@ break_nosleep:
 	if (params->emc_bct_spare4)
 		*(vu32 *)params->emc_bct_spare4 = params->emc_bct_spare5;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	// Initialize MC VPR settings.
 	MC(MC_VIDEO_PROTECT_BOM)            = params->mc_video_protect_bom;
@@ -483,7 +528,8 @@ break_nosleep:
 	MC(MC_EMEM_ARB_RSV)             = params->mc_emem_arb_rsv;
 	MC(MC_DA_CONFIG0)               = params->mc_da_cfg0;
 
-	MC(MC_TIMING_CONTROL) = 1; // Trigger MC timing update.
+	// Trigger MC timing update.
+	MC(MC_TIMING_CONTROL) = 1;
 
 	// Program second-level clock enable overrides.
 	MC(MC_CLKEN_OVERRIDE) = params->mc_clken_override;
@@ -505,6 +551,7 @@ break_nosleep:
 	EMC(EMC_AUTO_CAL_VREF_SEL_0) = params->emc_auto_cal_vref_sel0;
 	EMC(EMC_AUTO_CAL_VREF_SEL_1) = params->emc_auto_cal_vref_sel1;
 
+	// Program/Start auto calibration.
 	EMC(EMC_AUTO_CAL_INTERVAL) = params->emc_auto_cal_interval;
 	EMC(EMC_AUTO_CAL_CONFIG)   = params->emc_auto_cal_config;
 	usleep(params->emc_auto_cal_wait);
@@ -561,9 +608,13 @@ break_nosleep:
 
 	EMC(EMC_PMACRO_COMMON_PAD_TX_CTRL) = params->emc_pmacro_common_pad_tx_ctrl;
 	EMC(EMC_DBG)                 = params->emc_dbg;
+
+	// Clear read fifo.
 	EMC(EMC_QRST)                = params->emc_qrst;
 	EMC(EMC_ISSUE_QRST)          = 1;
 	EMC(EMC_ISSUE_QRST)          = 0;
+
+	// Program the rest of EMC timing configuration.
 	EMC(EMC_QSAFE)               = params->emc_qsafe;
 	EMC(EMC_RDV)                 = params->emc_rdv;
 	EMC(EMC_RDV_MASK)            = params->emc_rdv_mask;
@@ -612,14 +663,16 @@ break_nosleep:
 	if (params->boot_rom_patch_control & BIT(31))
 	{
 		*(vu32 *)(APB_MISC_BASE + params->boot_rom_patch_control * 4) = params->boot_rom_patch_data;
-		MC(MC_TIMING_CONTROL) = 1; // Trigger MC timing update.
+
+		// Trigger MC timing update.
+		MC(MC_TIMING_CONTROL) = 1;
 	}
 
 	// Release SEL_DPD_CMD.
-	PMC(APBDEV_PMC_IO_DPD3_REQ) = ((params->emc_pmc_scratch1 & 0x3FFFFFFF) | 0x40000000) & 0xCFFF0000;
+	PMC(APBDEV_PMC_IO_DPD3_REQ) = (params->emc_pmc_scratch1 & 0xFFF0000) | PMC_IO_DPD_REQ_DPD_OFF;
 	usleep(params->pmc_io_dpd3_req_wait);
 
-	// Set autocal interval if not configured.
+	// Stall auto call measurements if periodic calibration is disabled.
 	if (!params->emc_auto_cal_interval)
 		EMC(EMC_AUTO_CAL_CONFIG) = params->emc_auto_cal_config | 0x200;
 
@@ -632,7 +685,8 @@ break_nosleep:
 		EMC(EMC_ZCAL_MRW_CMD)  = params->emc_zcal_mrw_cmd;
 	}
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 	usleep(params->emc_timing_control_wait);
 
 	// Deassert HOLD_CKE_LOW.
@@ -701,13 +755,14 @@ break_nosleep:
 	if (params->emc_bct_spare12)
 		*(vu32 *)params->emc_bct_spare12 = params->emc_bct_spare13;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	if (params->emc_extra_refresh_num)
 		EMC(EMC_REF) = (((1 << params->emc_extra_refresh_num) - 1) << 8) | (params->emc_dev_select << 30) | 3;
 
 	// Enable refresh.
-	EMC(EMC_REFCTRL) = params->emc_dev_select | 0x80000000;
+	EMC(EMC_REFCTRL) = params->emc_dev_select | BIT(31);
 
 	EMC(EMC_DYN_SELF_REF_CONTROL) = params->emc_dyn_self_ref_control;
 	EMC(EMC_CFG_UPDATE)    = params->emc_cfg_update;
@@ -717,9 +772,10 @@ break_nosleep:
 	EMC(EMC_SEL_DPD_CTRL)  = params->emc_sel_dpd_ctrl;
 
 	// Write addr swizzle lock bit.
-	EMC(EMC_FBIO_SPARE) = params->emc_fbio_spare | 2;
+	EMC(EMC_FBIO_SPARE) = params->emc_fbio_spare | BIT(1);
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Re-trigger timing to latch power saving functions.
+	// Re-trigger timing to latch power saving functions.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	// Enable EMC pipe clock gating.
 	EMC(EMC_CFG_PIPE_CLK) = params->emc_cfg_pipe_clk;
@@ -741,8 +797,19 @@ break_nosleep:
 
 static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 {
-	u32 pmc_scratch1 = ~params->emc_pmc_scratch1;
-	u32 pmc_scratch2 = ~params->emc_pmc_scratch2;
+	// VDDP Select.
+	PMC(APBDEV_PMC_VDDP_SEL) = params->pmc_vddp_sel;
+	usleep(params->pmc_vddp_sel_wait);
+
+	// Turn on MEM IO Power.
+	PMC(APBDEV_PMC_NO_IOPOWER) &= PMC_NO_IOPOWER_SDMMC1; // Only keep SDMMC1 state. (Was params->pmc_no_io_power).
+	PMC(APBDEV_PMC_REG_SHORT)   = params->pmc_reg_short;
+
+	PMC(APBDEV_PMC_DDR_CNTRL)   = params->pmc_ddr_ctrl;
+
+	// Patch 1 using BCT spare variables
+	if (params->emc_bct_spare0)
+		*(vu32 *)params->emc_bct_spare0 = params->emc_bct_spare1;
 
 	// Override HW FSM if needed.
 	if (params->clk_rst_pllm_misc20_override_enable)
@@ -750,16 +817,18 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 
 	// Program DPD3/DPD4 regs (coldboot path).
 	// Enable sel_dpd on unused pins.
+	u32 pmc_scratch1 = ~params->emc_pmc_scratch1;
 	PMC(APBDEV_PMC_WEAK_BIAS)   = (pmc_scratch1 & 0x1000) << 19 | (pmc_scratch1 & 0xFFF) << 18 | (pmc_scratch1 & 0x8000) << 15;
-	PMC(APBDEV_PMC_IO_DPD3_REQ) = (pmc_scratch1 & 0x9FFF) + 0x80000000;
+	PMC(APBDEV_PMC_IO_DPD3_REQ) = (pmc_scratch1 & 0x9FFF) | PMC_IO_DPD_REQ_DPD_ON;
 	usleep(params->pmc_io_dpd3_req_wait);
 
 	// Disable e_dpd_vttgen.
-	PMC(APBDEV_PMC_IO_DPD4_REQ) = (pmc_scratch2 & 0x3FFF0000) | 0x80000000;
+	u32 pmc_scratch2 = ~params->emc_pmc_scratch2;
+	PMC(APBDEV_PMC_IO_DPD4_REQ) = (pmc_scratch2 & 0x3FFF0000) | PMC_IO_DPD_REQ_DPD_ON;
 	usleep(params->pmc_io_dpd4_req_wait);
 
 	// Disable e_dpd_bg.
-	PMC(APBDEV_PMC_IO_DPD4_REQ) = (pmc_scratch2 & 0x1FFF) | 0x80000000;
+	PMC(APBDEV_PMC_IO_DPD4_REQ) = (pmc_scratch2 & 0x1FFF) | PMC_IO_DPD_REQ_DPD_ON;
 	usleep(1);
 
 	// Program CMD mapping. Required before brick mapping, else
@@ -800,7 +869,8 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->emc_bct_spare_secure4)
 		*(vu32 *)params->emc_bct_spare_secure4 = params->emc_bct_spare_secure5;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 	usleep(params->pmc_vddp_sel_wait + 2); // Ensure the regulators settle.
 
 	// Set clock sources.
@@ -817,6 +887,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	// This is required to do any reads from the pad macros.
 	EMC(EMC_CONFIG_SAMPLE_DELAY) = params->emc_config_sample_delay;
 
+	// Set data pipes mode.
 	EMC(EMC_FBIO_CFG8) = params->emc_fbio_cfg8;
 
 	// Set swizzle for Rank 0.
@@ -834,12 +905,12 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->emc_bct_spare6)
 		*(vu32 *)params->emc_bct_spare6 = params->emc_bct_spare7;
 
-	// Set pad controls.
+	// Program calibration impedance.
 	EMC(EMC_XM2COMPPADCTRL)  = params->emc_xm2_comp_pad_ctrl;
 	EMC(EMC_XM2COMPPADCTRL2) = params->emc_xm2_comp_pad_ctrl2;
 	EMC(EMC_XM2COMPPADCTRL3) = params->emc_xm2_comp_pad_ctrl3;
 
-	// Program Autocal controls with shadowed register fields.
+	// Program Autocal controls.
 	EMC(EMC_AUTO_CAL_CONFIG2) = params->emc_auto_cal_config2;
 	EMC(EMC_AUTO_CAL_CONFIG3) = params->emc_auto_cal_config3;
 	EMC(EMC_AUTO_CAL_CONFIG4) = params->emc_auto_cal_config4;
@@ -848,6 +919,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_AUTO_CAL_CONFIG7) = params->emc_auto_cal_config7;
 	EMC(EMC_AUTO_CAL_CONFIG8) = params->emc_auto_cal_config8;
 
+	// Program termination and drive strength
 	EMC(EMC_PMACRO_RX_TERM)            = params->emc_pmacro_rx_term;
 	EMC(EMC_PMACRO_DQ_TX_DRV)          = params->emc_pmacro_dq_tx_drive;
 	EMC(EMC_PMACRO_CA_TX_DRV)          = params->emc_pmacro_ca_tx_drive;
@@ -856,10 +928,12 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_AUTO_CAL_CHANNEL)          = params->emc_auto_cal_channel;
 	EMC(EMC_PMACRO_ZCTRL)              = params->emc_pmacro_zcrtl;
 
+	// Program dll config.
 	EMC(EMC_DLL_CFG_0)     = params->emc_dll_cfg0;
 	EMC(EMC_DLL_CFG_1)     = params->emc_dll_cfg1;
 	EMC(EMC_CFG_DIG_DLL_1) = params->emc_cfg_dig_dll_1;
 
+	// Program barrelshift.
 	EMC(EMC_DATA_BRLSHFT_0) = params->emc_data_brlshft0;
 	EMC(EMC_DATA_BRLSHFT_1) = params->emc_data_brlshft1;
 	EMC(EMC_DQS_BRLSHFT_0)  = params->emc_dqs_brlshft0;
@@ -873,6 +947,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_QUSE_BRLSHFT_2) = params->emc_quse_brlshft2;
 	EMC(EMC_QUSE_BRLSHFT_3) = params->emc_quse_brlshft3;
 
+	// Program pad macros controls and termination.
 	EMC(EMC_PMACRO_BRICK_CTRL_RFU1) = params->emc_pmacro_brick_ctrl_rfu1;
 	EMC(EMC_PMACRO_PAD_CFG_CTRL)    = params->emc_pmacro_pad_cfg_ctrl;
 
@@ -886,6 +961,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMACRO_CMD_RX_TERM_MODE)     = params->emc_pmacro_cmd_rx_term_mode;
 	EMC(EMC_PMACRO_CMD_PAD_TX_CTRL)      = params->emc_pmacro_cmd_pad_tx_ctrl & 0xEFFFFFFF;
 
+	// Program pad macro pins/bytes.
 	EMC(EMC_CFG_3)                   = params->emc_cfg3;
 	EMC(EMC_PMACRO_TX_PWRD_0)        = params->emc_pmacro_tx_pwrd0;
 	EMC(EMC_PMACRO_TX_PWRD_1)        = params->emc_pmacro_tx_pwrd1;
@@ -901,26 +977,26 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMACRO_TX_SEL_CLK_SRC_5) = params->emc_pmacro_tx_sel_clk_src5;
 
 	// Program per bit pad macros.
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_0) = params->emc_pmacro_perbit_fgcg_ctrl0;
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_1) = params->emc_pmacro_perbit_fgcg_ctrl1;
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_2) = params->emc_pmacro_perbit_fgcg_ctrl2;
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_3) = params->emc_pmacro_perbit_fgcg_ctrl3;
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_4) = params->emc_pmacro_perbit_fgcg_ctrl4;
-	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_5) = params->emc_pmacro_perbit_fgcg_ctrl5;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_0)  = params->emc_pmacro_perbit_rfu_ctrl0;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_1)  = params->emc_pmacro_perbit_rfu_ctrl1;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_2)  = params->emc_pmacro_perbit_rfu_ctrl2;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_3)  = params->emc_pmacro_perbit_rfu_ctrl3;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_4)  = params->emc_pmacro_perbit_rfu_ctrl4;
-	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_5)  = params->emc_pmacro_perbit_rfu_ctrl5;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_0) = params->emc_pmacro_perbit_rfu1_ctrl0;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_1) = params->emc_pmacro_perbit_rfu1_ctrl1;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_2) = params->emc_pmacro_perbit_rfu1_ctrl2;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_3) = params->emc_pmacro_perbit_rfu1_ctrl3;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_4) = params->emc_pmacro_perbit_rfu1_ctrl4;
-	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_5) = params->emc_pmacro_perbit_rfu1_ctrl5;
-	EMC(EMC_PMACRO_DATA_PI_CTRL)       = params->emc_pmacro_data_pi_ctrl;
-	EMC(EMC_PMACRO_CMD_PI_CTRL)        = params->emc_pmacro_cmd_pi_ctrl;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_0_B01) = params->emc_pmacro_perbit_fgcg_ctrl0;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_1_B01) = params->emc_pmacro_perbit_fgcg_ctrl1;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_2_B01) = params->emc_pmacro_perbit_fgcg_ctrl2;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_3_B01) = params->emc_pmacro_perbit_fgcg_ctrl3;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_4_B01) = params->emc_pmacro_perbit_fgcg_ctrl4;
+	EMC(EMC_PMACRO_PERBIT_FGCG_CTRL_5_B01) = params->emc_pmacro_perbit_fgcg_ctrl5;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_0_B01)  = params->emc_pmacro_perbit_rfu_ctrl0;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_1_B01)  = params->emc_pmacro_perbit_rfu_ctrl1;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_2_B01)  = params->emc_pmacro_perbit_rfu_ctrl2;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_3_B01)  = params->emc_pmacro_perbit_rfu_ctrl3;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_4_B01)  = params->emc_pmacro_perbit_rfu_ctrl4;
+	EMC(EMC_PMACRO_PERBIT_RFU_CTRL_5_B01)  = params->emc_pmacro_perbit_rfu_ctrl5;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_0_B01) = params->emc_pmacro_perbit_rfu1_ctrl0;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_1_B01) = params->emc_pmacro_perbit_rfu1_ctrl1;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_2_B01) = params->emc_pmacro_perbit_rfu1_ctrl2;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_3_B01) = params->emc_pmacro_perbit_rfu1_ctrl3;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_4_B01) = params->emc_pmacro_perbit_rfu1_ctrl4;
+	EMC(EMC_PMACRO_PERBIT_RFU1_CTRL_5_B01) = params->emc_pmacro_perbit_rfu1_ctrl5;
+	EMC(EMC_PMACRO_DATA_PI_CTRL_B01)       = params->emc_pmacro_data_pi_ctrl;
+	EMC(EMC_PMACRO_CMD_PI_CTRL_B01)        = params->emc_pmacro_cmd_pi_ctrl;
 
 	EMC(EMC_PMACRO_DDLL_BYPASS)   = params->emc_pmacro_ddll_bypass;
 	EMC(EMC_PMACRO_DDLL_PWRD_0)   = params->emc_pmacro_ddll_pwrd0;
@@ -929,12 +1005,15 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMACRO_CMD_CTRL_0)    = params->emc_pmacro_cmd_ctrl0;
 	EMC(EMC_PMACRO_CMD_CTRL_1)    = params->emc_pmacro_cmd_ctrl1;
 	EMC(EMC_PMACRO_CMD_CTRL_2)    = params->emc_pmacro_cmd_ctrl2;
+
+	// Program inbound vref setting.
 	EMC(EMC_PMACRO_IB_VREF_DQ_0)  = params->emc_pmacro_ib_vref_dq_0;
 	EMC(EMC_PMACRO_IB_VREF_DQ_1)  = params->emc_pmacro_ib_vref_dq_1;
 	EMC(EMC_PMACRO_IB_VREF_DQS_0) = params->emc_pmacro_ib_vref_dqs_0;
 	EMC(EMC_PMACRO_IB_VREF_DQS_1) = params->emc_pmacro_ib_vref_dqs_1;
 	EMC(EMC_PMACRO_IB_RXRT)       = params->emc_pmacro_ib_rxrt;
 
+	// Program quse trimmers.
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_0) = params->emc_pmacro_quse_ddll_rank0_0;
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_1) = params->emc_pmacro_quse_ddll_rank0_1;
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK0_2) = params->emc_pmacro_quse_ddll_rank0_2;
@@ -948,6 +1027,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK1_4) = params->emc_pmacro_quse_ddll_rank1_4;
 	EMC(EMC_PMACRO_QUSE_DDLL_RANK1_5) = params->emc_pmacro_quse_ddll_rank1_5;
 
+	// Program outbound trimmers.
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_0) = params->emc_pmacro_ob_ddll_long_dq_rank0_0;
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_1) = params->emc_pmacro_ob_ddll_long_dq_rank0_1;
 	EMC(EMC_PMACRO_OB_DDLL_LONG_DQ_RANK0_2) = params->emc_pmacro_ob_ddll_long_dq_rank0_2;
@@ -982,6 +1062,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMACRO_IB_DDLL_LONG_DQS_RANK1_2) = params->emc_pmacro_ib_ddll_long_dqs_rank1_2;
 	EMC(EMC_PMACRO_IB_DDLL_LONG_DQS_RANK1_3) = params->emc_pmacro_ib_ddll_long_dqs_rank1_3;
 
+	// Program clock trimmers.
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_0)  = params->emc_pmacro_ddll_long_cmd_0;
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_1)  = params->emc_pmacro_ddll_long_cmd_1;
 	EMC(EMC_PMACRO_DDLL_LONG_CMD_2)  = params->emc_pmacro_ddll_long_cmd_2;
@@ -1006,7 +1087,8 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->emc_bct_spare_secure10)
 		*(vu32 *)params->emc_bct_spare_secure10 = params->emc_bct_spare_secure11;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	// Initialize MC VPR settings.
 	MC(MC_VIDEO_PROTECT_BOM)            = params->mc_video_protect_bom;
@@ -1071,7 +1153,8 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	MC(MC_EMEM_ARB_RSV)             = params->mc_emem_arb_rsv;
 	MC(MC_DA_CONFIG0)               = params->mc_da_cfg0;
 
-	MC(MC_TIMING_CONTROL) = 1; // Trigger MC timing update.
+	// Trigger MC timing update.
+	MC(MC_TIMING_CONTROL) = 1;
 
 	// Program second-level clock enable overrides.
 	MC(MC_CLKEN_OVERRIDE) = params->mc_clken_override;
@@ -1093,6 +1176,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_AUTO_CAL_VREF_SEL_0) = params->emc_auto_cal_vref_sel0;
 	EMC(EMC_AUTO_CAL_VREF_SEL_1) = params->emc_auto_cal_vref_sel1;
 
+	// Program/Start auto calibration.
 	EMC(EMC_AUTO_CAL_INTERVAL) = params->emc_auto_cal_interval;
 	EMC(EMC_AUTO_CAL_CONFIG)   = params->emc_auto_cal_config;
 	usleep(params->emc_auto_cal_wait);
@@ -1101,7 +1185,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->emc_bct_spare8)
 		*(vu32 *)params->emc_bct_spare8 = params->emc_bct_spare9;
 
-	EMC(EMC_AUTO_CAL_CONFIG9) = params->emc_auto_cal_config9;
+	EMC(EMC_AUTO_CAL_CONFIG9_B01) = params->emc_auto_cal_config9;
 
 	// Program EMC timing configuration.
 	EMC(EMC_CFG_2)           = params->emc_cfg2;
@@ -1121,11 +1205,11 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_RAS)             = params->emc_ras;
 	EMC(EMC_RP)              = params->emc_rp;
 	EMC(EMC_TPPD)            = params->emc_tppd;
-	EMC(EMC_CTT)             = params->emc_trtm;
-	EMC(EMC_FBIO_TWTM)       = params->emc_twtm;
-	EMC(EMC_FBIO_TRATM)      = params->emc_tratm;
-	EMC(EMC_FBIO_TWATM)      = params->emc_twatm;
-	EMC(EMC_FBIO_TR2REF)     = params->emc_tr2ref;
+	EMC(EMC_TRTM_B01)        = params->emc_trtm;
+	EMC(EMC_TWTM_B01)        = params->emc_twtm;
+	EMC(EMC_TRATM_B01)       = params->emc_tratm;
+	EMC(EMC_TWATM_B01)       = params->emc_twatm;
+	EMC(EMC_TR2REF_B01)      = params->emc_tr2ref;
 	EMC(EMC_R2R)             = params->emc_r2r;
 	EMC(EMC_W2W)             = params->emc_w2w;
 	EMC(EMC_R2W)             = params->emc_r2w;
@@ -1155,9 +1239,13 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PUTERM_WIDTH)    = params->emc_puterm_width;
 
 	EMC(EMC_DBG)                 = params->emc_dbg;
+
+	// Clear read fifo.
 	EMC(EMC_QRST)                = params->emc_qrst;
 	EMC(EMC_ISSUE_QRST)          = 1;
 	EMC(EMC_ISSUE_QRST)          = 0;
+
+	// Program the rest of EMC timing configuration.
 	EMC(EMC_QSAFE)               = params->emc_qsafe;
 	EMC(EMC_RDV)                 = params->emc_rdv;
 	EMC(EMC_RDV_MASK)            = params->emc_rdv_mask;
@@ -1198,7 +1286,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_PMC_SCRATCH3) = params->emc_pmc_scratch3;
 	EMC(EMC_ACPD_CONTROL) = params->emc_acpd_control;
 	EMC(EMC_TXDSRVTTGEN)  = params->emc_txdsrvttgen;
-	EMC(EMC_PMACRO_DSR_VTTGEN_CTRL0) = params->emc_pmacro_dsr_vttgen_ctrl0;
+	EMC(EMC_PMACRO_DSR_VTTGEN_CTRL_0_B01) = params->emc_pmacro_dsr_vttgen_ctrl0;
 
 	// Set pipe bypass enable bits before sending any DRAM commands.
 	EMC(EMC_CFG) = (params->emc_cfg & 0xE) | 0x3C00000;
@@ -1207,7 +1295,9 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->boot_rom_patch_control)
 	{
 		*(vu32 *)params->boot_rom_patch_control = params->boot_rom_patch_data;
-		MC(MC_TIMING_CONTROL) = 1; // Trigger MC timing update.
+
+		// Trigger MC timing update.
+		MC(MC_TIMING_CONTROL) = 1;
 	}
 
 	// Patch 7 to 9 using BCT spare secure variables.
@@ -1219,7 +1309,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 		*(vu32 *)params->emc_bct_spare_secure16 = params->emc_bct_spare_secure17;
 
 	// Release SEL_DPD_CMD.
-	PMC(APBDEV_PMC_IO_DPD3_REQ) = ((params->emc_pmc_scratch1 & 0x3FFFFFFF) | 0x40000000) & 0xCFFF0000;
+	PMC(APBDEV_PMC_IO_DPD3_REQ) = (params->emc_pmc_scratch1 & 0xFFF0000) | PMC_IO_DPD_REQ_DPD_OFF;
 	usleep(params->pmc_io_dpd3_req_wait);
 
 	// Set transmission pad control parameters.
@@ -1232,7 +1322,8 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 		EMC(EMC_ZCAL_MRW_CMD)  = params->emc_zcal_mrw_cmd;
 	}
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 	usleep(params->emc_timing_control_wait);
 
 	// Deassert HOLD_CKE_LOW.
@@ -1309,13 +1400,14 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	if (params->emc_bct_spare12)
 		*(vu32 *)params->emc_bct_spare12 = params->emc_bct_spare13;
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Trigger timing update so above writes take place.
+	// Trigger timing update so above writes take place.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	if (params->emc_extra_refresh_num)
 		EMC(EMC_REF) = ((1 << params->emc_extra_refresh_num << 8) - 253) | (params->emc_dev_select << 30);
 
 	// Enable refresh.
-	EMC(EMC_REFCTRL) = params->emc_dev_select | 0x80000000;
+	EMC(EMC_REFCTRL) = params->emc_dev_select | BIT(31);
 
 	EMC(EMC_DYN_SELF_REF_CONTROL) = params->emc_dyn_self_ref_control;
 	EMC(EMC_CFG)           = params->emc_cfg;
@@ -1324,9 +1416,10 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_SEL_DPD_CTRL)  = params->emc_sel_dpd_ctrl;
 
 	// Write addr swizzle lock bit.
-	EMC(EMC_FBIO_SPARE) = params->emc_fbio_spare | 2;
+	EMC(EMC_FBIO_SPARE) = params->emc_fbio_spare | BIT(1);
 
-	EMC(EMC_TIMING_CONTROL) = 1; // Re-trigger timing to latch power saving functions.
+	// Re-trigger timing to latch power saving functions.
+	EMC(EMC_TIMING_CONTROL) = 1;
 
 	EMC(EMC_CFG_UPDATE) = params->emc_cfg_update;
 
@@ -1337,7 +1430,7 @@ static void _sdram_config_t210b01(const sdram_params_t210b01_t *params)
 	EMC(EMC_FDPD_CTRL_CMD_NO_RAMP) = params->emc_fdpd_ctrl_cmd_no_ramp;
 
 	// Set untranslated region requirements.
-	MC(MC_UNTRANSLATED_REGION_CHECK) = params->mc_untranslated_region_check;
+	MC(MC_UNTRANSLATED_REGION_CHECK_B01) = params->mc_untranslated_region_check;
 
 	// Lock carveouts per BCT cfg.
 	MC(MC_VIDEO_PROTECT_REG_CTRL) = params->mc_video_protect_write_access;
@@ -1427,65 +1520,28 @@ void *sdram_get_params_patched()
 	return (void *)sdram_params;
 }
 
-static void _sdram_init_t210()
-{
-	const sdram_params_t210_t *params = (const sdram_params_t210_t *)_sdram_get_params_t210();
-	if (params->memory_type != MEMORY_TYPE_LPDDR4)
-		return;
-
-	// Set DRAM voltage.
-	max7762x_regulator_set_voltage(REGULATOR_SD1, 1125000); // HOS: 1.125V. Bootloader: 1.1V.
-
-	// VDDP Select.
-	PMC(APBDEV_PMC_VDDP_SEL) = params->pmc_vddp_sel;
-	usleep(params->pmc_vddp_sel_wait);
-
-	// Set DDR pad voltage.
-	PMC(APBDEV_PMC_DDR_PWR) = PMC(APBDEV_PMC_DDR_PWR); // Normally params->pmc_ddr_pwr.
-
-	// Turn on MEM IO Power.
-	PMC(APBDEV_PMC_NO_IOPOWER) = params->pmc_no_io_power;
-	PMC(APBDEV_PMC_REG_SHORT)  = params->pmc_reg_short;
-
-	PMC(APBDEV_PMC_DDR_CNTRL)  = params->pmc_ddr_ctrl;
-
-	// Patch 1 using BCT spare variables
-	if (params->emc_bct_spare0)
-		*(vu32 *)params->emc_bct_spare0 = params->emc_bct_spare1;
-
-	_sdram_config_t210(params);
-}
-
-static void _sdram_init_t210b01()
-{
-	const sdram_params_t210b01_t *params = (const sdram_params_t210b01_t *)sdram_get_params_t210b01();
-	if (params->memory_type != MEMORY_TYPE_LPDDR4)
-		return;
-
-	// VDDP Select.
-	PMC(APBDEV_PMC_VDDP_SEL) = params->pmc_vddp_sel;
-	usleep(params->pmc_vddp_sel_wait);
-
-	// Turn on MEM IO Power.
-	PMC(APBDEV_PMC_NO_IOPOWER) = params->pmc_no_io_power;
-	PMC(APBDEV_PMC_REG_SHORT)  = params->pmc_reg_short;
-
-	PMC(APBDEV_PMC_DDR_CNTRL)  = params->pmc_ddr_ctrl;
-
-	// Patch 1 using BCT spare variables
-	if (params->emc_bct_spare0)
-		*(vu32 *)params->emc_bct_spare0 = params->emc_bct_spare1;
-
-	_sdram_config_t210b01(params);
-}
-
 void sdram_init()
 {
 	// Disable remote sense for SD1.
 	i2c_send_byte(I2C_5, MAX77620_I2C_ADDR, MAX77620_REG_SD_CFG2, MAX77620_SD_CNF2_ROVS_EN_SD0 | MAX77620_SD_CNF2_RSVD);
 
 	if (hw_get_chip_id() == GP_HIDREV_MAJOR_T210)
-		_sdram_init_t210();
+	{
+		const sdram_params_t210_t *params = (const sdram_params_t210_t *)_sdram_get_params_t210();
+		if (params->memory_type != MEMORY_TYPE_LPDDR4)
+			return;
+
+		// Set DRAM voltage.
+		max7762x_regulator_set_voltage(REGULATOR_SD1, 1125000); // HOS: 1.125V. Bootloader: 1.1V.
+
+		_sdram_config_t210(params);
+	}
 	else
-		_sdram_init_t210b01();
+	{
+		const sdram_params_t210b01_t *params = (const sdram_params_t210b01_t *)sdram_get_params_t210b01();
+		if (params->memory_type != MEMORY_TYPE_LPDDR4)
+			return;
+
+		_sdram_config_t210b01(params);
+	}
 }

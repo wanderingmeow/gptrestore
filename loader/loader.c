@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 CTCaer
+ * Copyright (c) 2019-2024 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -22,22 +22,25 @@
 
 #include <memory_map.h>
 #include <libs/compr/lz.h>
+#include <soc/bpmp.h>
 #include <soc/clock.h>
 #include <soc/t210.h>
 
 // 0x4003D000: Safe for panic preserving, 0x40038000: Safe for debugging needs.
-#define IPL_RELOC_TOP  0x40038000
+#define IPL_RELOC_TOP        0x40038000
 #define IPL_PATCHED_RELOC_SZ 0x94
+#define IPL_VERSION_RCFG_OFF 0x120
 
 boot_cfg_t __attribute__((section ("._boot_cfg"))) b_cfg;
 const volatile ipl_ver_meta_t __attribute__((section ("._ipl_version"))) ipl_ver = {
-	.magic = BL_MAGIC,
-	.version = (BL_VER_MJ + '0') | ((BL_VER_MN + '0') << 8) | ((BL_VER_HF + '0') << 16),
-	.rsvd0 = 0,
-	.rsvd1 = 0
+	.magic             = BL_MAGIC,
+	.version           = (BL_VER_MJ + '0') | ((BL_VER_MN + '0') << 8) | ((BL_VER_HF + '0') << 16) | ((BL_VER_RL) << 24),
+	.rcfg.rsvd_flags   = 0,
+	.rcfg.bclk_t210    = BPMP_CLK_LOWER_BOOST,
+	.rcfg.bclk_t210b01 = BPMP_CLK_DEFAULT_BOOST
 };
 
-const volatile char __attribute__((section ("._octopus"))) octopus[] =
+const char __attribute__((section ("._octopus"))) octopus[] =
 	"\n"
 	"                         ___\n"
 	"                      .-'   `'.\n"
@@ -66,6 +69,12 @@ void loader_main()
 	CLOCK(CLK_RST_CONTROLLER_SUPER_SCLK_DIVIDER) = 0x80000000; // Enable SUPER_SDIV to 1.
 	CLOCK(CLK_RST_CONTROLLER_CLK_SYSTEM_RATE)    = 2;          // Set HCLK div to 1 and PCLK div to 3.
 	CLOCK(CLK_RST_CONTROLLER_SCLK_BURST_POLICY)  = 0x20003333; // Set SCLK to PLLP_OUT (408MHz).
+
+	// Set arbiter.
+	ARB_PRI(ARB_PRIO_CPU_PRIORITY) = 0x12412D1;
+	ARB_PRI(ARB_PRIO_COP_PRIORITY) = 0x0000000;
+	ARB_PRI(ARB_PRIO_VCP_PRIORITY) = 0x220244A;
+	ARB_PRI(ARB_PRIO_DMA_PRIORITY) = 0x320369B;
 
 	// Get Payload size.
 	u32 payload_size  = sizeof(payload_00) + sizeof(payload_01);                // Actual payload size.
@@ -97,6 +106,9 @@ void loader_main()
 
 	// Copy over boot configuration storage.
 	memcpy((u8 *)(IPL_LOAD_ADDR + IPL_PATCHED_RELOC_SZ), &b_cfg, sizeof(boot_cfg_t));
+
+	// Copy new reserved configuration.
+	memcpy((u8 *)(IPL_LOAD_ADDR + IPL_VERSION_RCFG_OFF), (rsvd_cfg_t *)&ipl_ver.rcfg, sizeof(rsvd_cfg_t));
 
 	// Chainload into uncompressed payload.
 	void (*ipl_ptr)() = (void *)IPL_LOAD_ADDR;

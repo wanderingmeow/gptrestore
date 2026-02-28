@@ -45,7 +45,7 @@ typedef struct _opt_win_cal_t
 } opt_win_cal_t;
 
 // Nintendo Switch Icosa/Iowa Optical Window calibration.
-const opt_win_cal_t opt_win_cal_default[] = {
+static const opt_win_cal_t opt_win_cal_default[] = {
 	{  500, 5002, 7502 },
 	{  754, 2250, 2000 },
 	{ 1029, 1999, 1667 },
@@ -54,14 +54,14 @@ const opt_win_cal_t opt_win_cal_default[] = {
 };
 
 // Nintendo Switch Aula Optical Window calibration.
-const opt_win_cal_t opt_win_cal_aula[] = {
+static const opt_win_cal_t opt_win_cal_aula[] = {
 	{  231, 9697, 30300 },
 	{  993, 3333,  2778 },
 	{ 1478, 1621,  1053 },
 	{ 7500,   81,    10 }
 };
 
-const u32 als_gain_idx_tbl[4] = { 1, 2, 64, 128 };
+static const u32 als_gain_idx_tbl[4] = { 1, 2, 64, 128 };
 
 void set_als_cfg(als_ctxt_t *als_ctxt, u8 gain, u8 cycle)
 {
@@ -70,8 +70,6 @@ void set_als_cfg(als_ctxt_t *als_ctxt, u8 gain, u8 cycle)
 
 	if (!cycle)
 		cycle = 1;
-	else if (cycle > 255)
-		cycle = 255;
 
 	i2c_send_byte(I2C_2, BH1730_I2C_ADDR, BH1730_ADDR(BH1730_GAIN_REG),   gain);
 	i2c_send_byte(I2C_2, BH1730_I2C_ADDR, BH1730_ADDR(BH1730_TIMING_REG), (256 - cycle));

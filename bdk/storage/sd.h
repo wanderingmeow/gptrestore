@@ -22,7 +22,7 @@
 #include <storage/sdmmc_driver.h>
 #include <libs/fatfs/ff.h>
 
-#define SD_BLOCKSIZE 512
+#define SD_BLOCKSIZE SDMMC_DAT_BLOCKSIZE
 
 enum
 {
@@ -61,6 +61,6 @@ void sd_unmount();
 void sd_end();
 bool sd_is_gpt();
 void *sd_file_read(const char *path, u32 *fsize);
-int  sd_save_to_file(void *buf, u32 size, const char *filename);
+int  sd_save_to_file(const void *buf, u32 size, const char *filename);
 
 #endif

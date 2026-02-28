@@ -1,19 +1,19 @@
 /*
-* Copyright (c) 2018 naehrwert
-* Copyright (c) 2018-2022 CTCaer
-*
-* This program is free software; you can redistribute it and/or modify it
-* under the terms and conditions of the GNU General Public License,
-* version 2, as published by the Free Software Foundation.
-*
-* This program is distributed in the hope it will be useful, but WITHOUT
-* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-* more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ * Copyright (c) 2018 naehrwert
+ * Copyright (c) 2018-2025 CTCaer
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <string.h>
 
@@ -28,8 +28,6 @@
 #include <soc/t210.h>
 #include <storage/sd.h>
 #include <utils/util.h>
-
-#define USE_RTC_TIMER
 
 u8 bit_count(u32 val)
 {
@@ -102,8 +100,9 @@ u64 sqrt64(u64 num)
 	return square_root;
 }
 
-#define	TLONG_MAX	((long)(((unsigned long)(~0L)) >> 1))
-#define	TLONG_MIN	((long)(~TLONG_MAX))
+#define	TULONG_MAX  ((unsigned long)((unsigned long)(~0L)))
+#define	TLONG_MAX   ((long)(((unsigned long)(~0L)) >> 1))
+#define	TLONG_MIN   ((long)(~TLONG_MAX))
 #define ISSPACE(ch) ((ch >= '\t' && ch <= '\r') || (ch == ' '))
 #define ISDIGIT(ch) ( ch >= '0'  && ch <= '9' )
 #define ISALPHA(ch) ((ch >= 'a'  && ch <= 'z')  || (ch >= 'A' && ch <= 'Z'))
@@ -137,7 +136,7 @@ long strtol(const char *nptr, char **endptr, register int base)
 	} else if (c == '+')
 		c = *s++;
 	if ((base == 0 || base == 16) &&
-	    c == '0' && (*s == 'x' || *s == 'X')) {
+		c == '0' && (*s == 'x' || *s == 'X')) {
 		c = s[1];
 		s += 2;
 		base = 16;
@@ -162,7 +161,7 @@ long strtol(const char *nptr, char **endptr, register int base)
 	 * Set any if any `digits' consumed; make it negative to indicate
 	 * overflow.
 	 */
-	cutoff = neg ? -(unsigned long)TLONG_MIN : TLONG_MAX;
+	cutoff = neg ? -(unsigned long)TLONG_MIN : (base == 16 ? TULONG_MAX : TLONG_MAX);
 	cutlim = cutoff % (unsigned long)base;
 	cutoff /= (unsigned long)base;
 	for (acc = 0, any = 0;; c = *s++) {
@@ -196,10 +195,11 @@ int atoi(const char *nptr)
   return (int)strtol(nptr, (char **)NULL, 10);
 }
 
-void exec_cfg(u32 *base, const cfg_op_t *ops, u32 num_ops)
+void reg_write_array(vu32 *base, const reg_cfg_t *cfg, u32 num_cfg)
 {
-	for (u32 i = 0; i < num_ops; i++)
-		base[ops[i].off] = ops[i].val;
+	// Expected register offset is a u32 array index.
+	for (u32 i = 0; i < num_cfg; i++)
+		base[cfg[i].idx] = cfg[i].val;
 }
 
 u32 crc32_calc(u32 crc, const u8 *buf, u32 len)
@@ -210,7 +210,7 @@ u32 crc32_calc(u32 crc, const u8 *buf, u32 len)
 	// Calculate CRC table.
 	if (!table)
 	{
-		table = calloc(256, sizeof(u32));
+		table = zalloc(256 * sizeof(u32));
 		for (u32 i = 0; i < 256; i++)
 		{
 			u32 rem = i;
@@ -239,6 +239,21 @@ u32 crc32_calc(u32 crc, const u8 *buf, u32 len)
 	return ~crc;
 }
 
+int qsort_compare_int(const void *a, const void *b)
+{
+	return (*(int *)a - *(int *)b);
+}
+
+int qsort_compare_char(const void *a, const void *b)
+{
+	return strcmp(*(const char **)a, *(const char **)b);
+}
+
+int qsort_compare_char_case(const void *a, const void *b)
+{
+	return strcasecmp(*(const char **)a, *(const char **)b);
+}
+
 void panic(u32 val)
 {
 	// Set panic code.
@@ -261,7 +276,7 @@ void power_set_state(power_state_t state)
 	sd_end();
 
 	// De-initialize and power down various hardware.
-	hw_reinit_workaround(false, 0);
+	hw_deinit(false);
 
 	// Set power state.
 	switch (state)
@@ -272,7 +287,7 @@ void power_set_state(power_state_t state)
 		break;
 
 	case REBOOT_BYPASS_FUSES:
-		panic(0x21); // Bypass fuse programming in package1.
+		panic(PMC_NX_PANIC_BYPASS_FUSES); // Bypass fuse programming in package1.
 		break;
 
 	case POWER_OFF:

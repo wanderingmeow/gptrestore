@@ -1,6 +1,6 @@
 /*
  *  Copyright (c) 2005-2007 Pierre Ossman, All Rights Reserved.
- *  Copyright (c) 2018-2023 CTCaer
+ *  Copyright (c) 2018-2025 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,11 +17,16 @@
 #define SD_SEND_RELATIVE_ADDR     3 /* bcr                     R6  */
 #define SD_SEND_IF_COND           8 /* bcr  [11:0] See below   R7  */
 #define SD_SWITCH_VOLTAGE        11 /* ac                      R1  */
+/* Class 2 */
+#define SD_ADDR_EXT              22 /* ac   [5:0]              R1  */
 /* class 10 */
 #define SD_SWITCH                 6 /* adtc [31:0] See below   R1  */
 /* class 5 */
 #define SD_ERASE_WR_BLK_START    32 /* ac   [31:0] data addr   R1  */
 #define SD_ERASE_WR_BLK_END      33 /* ac   [31:0] data addr   R1  */
+ /* class 11 */
+#define SD_READ_EXTR_SINGLE      48 /* adtc [31:0]             R1  */
+#define SD_WRITE_EXTR_SINGLE     49 /* adtc [31:0]             R1  */
 
 /* Application commands */
 #define SD_APP_SET_BUS_WIDTH             6 /* ac   [1:0] bus width    R1  */
@@ -46,7 +51,7 @@
 
 /* OCR bit definitions */
 #define SD_OCR_VDD_18       (1U << 7)     /* VDD voltage 1.8 */
-#define SD_VHD_27_36        (1U << 8)     /* VDD voltage 2.7 ~ 3.6 */
+#define SD_VHS_27_36        (1U << 8)     /* VDD voltage 2.7 ~ 3.6 */
 #define SD_OCR_VDD_32_33    (1U << 20)    /* VDD voltage 3.2 ~ 3.3 */
 #define SD_OCR_S18R         (1U << 24)    /* 1.8V switching request */
 #define SD_ROCR_S18A        SD_OCR_S18R   /* 1.8V switching accepted by card */

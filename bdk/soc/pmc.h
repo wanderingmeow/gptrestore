@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018 naehrwert
  * Copyright (c) 2018 st4rk
- * Copyright (c) 2018-2022 CTCaer
+ * Copyright (c) 2018-2024 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -37,12 +37,15 @@
 #define  PMC_CNTRL_SHUTDOWN_OE             BIT(22)
 #define APBDEV_PMC_SEC_DISABLE       0x4
 #define APBDEV_PMC_PWRGATE_TOGGLE    0x30
+#define  PMC_PWRGATE_TOGGLE_START          BIT(8)
 #define APBDEV_PMC_PWRGATE_STATUS    0x38
 #define APBDEV_PMC_NO_IOPOWER        0x44
-#define  PMC_NO_IOPOWER_SDMMC1_IO_EN       BIT(12)
-#define  PMC_NO_IOPOWER_SDMMC4_IO_EN       BIT(14)
+#define  PMC_NO_IOPOWER_MEM                BIT(7)
+#define  PMC_NO_IOPOWER_SDMMC1             BIT(12)
+#define  PMC_NO_IOPOWER_SDMMC4             BIT(14)
+#define  PMC_NO_IOPOWER_MEM_COMP           BIT(16)
 #define  PMC_NO_IOPOWER_AUDIO_HV           BIT(18)
-#define  PMC_NO_IOPOWER_GPIO_IO_EN         BIT(21)
+#define  PMC_NO_IOPOWER_GPIO               BIT(21)
 #define APBDEV_PMC_SCRATCH0          0x50
 #define  PMC_SCRATCH0_MODE_WARMBOOT        BIT(0)
 #define  PMC_SCRATCH0_MODE_RCM             BIT(1)
@@ -61,9 +64,9 @@
 #define APBDEV_PMC_SECURE_SCRATCH4   0xC0
 #define APBDEV_PMC_SECURE_SCRATCH5   0xC4
 #define APBDEV_PMC_PWR_DET_VAL       0xE4
-#define  PMC_PWR_DET_SDMMC1_IO_EN          BIT(12)
-#define  PMC_PWR_DET_AUDIO_HV              BIT(18)
-#define  PMC_PWR_DET_GPIO_IO_EN            BIT(21)
+#define  PMC_PWR_DET_33V_SDMMC1            BIT(12)
+#define  PMC_PWR_DET_33V_AUDIO_HV          BIT(18)
+#define  PMC_PWR_DET_33V_GPIO              BIT(21)
 #define APBDEV_PMC_DDR_PWR           0xE8
 #define APBDEV_PMC_USB_AO            0xF0
 #define APBDEV_PMC_CRYPTO_OP         0xF4
@@ -99,7 +102,9 @@
 #define  PMC_RST_STATUS_LP0                4
 #define  PMC_RST_STATUS_AOTAG              5
 #define APBDEV_PMC_IO_DPD_REQ        0x1B8
-#define  PMC_IO_DPD_REQ_DPD_OFF            BIT(30)
+#define  PMC_IO_DPD_REQ_DPD_IDLE           (0 << 30u)
+#define  PMC_IO_DPD_REQ_DPD_OFF            (1 << 30u)
+#define  PMC_IO_DPD_REQ_DPD_ON             (2 << 30u)
 #define APBDEV_PMC_IO_DPD2_REQ       0x1C0
 #define APBDEV_PMC_VDDP_SEL          0x1CC
 #define APBDEV_PMC_DDR_CFG           0x1D0
@@ -132,6 +137,9 @@
 #define  PMC_CNTRL2_SYSCLK_ORRIDE          BIT(10)
 #define  PMC_CNTRL2_HOLD_CKE_LOW_EN        BIT(12)
 #define  PMC_CNTRL2_ALLOW_PULSE_WAKE       BIT(14)
+#define APBDEV_PMC_FUSE_CONTROL      0x450
+#define  PMC_FUSE_CONTROL_PS18_LATCH_SET   BIT(8)
+#define  PMC_FUSE_CONTROL_PS18_LATCH_CLR   BIT(9)
 #define APBDEV_PMC_IO_DPD3_REQ       0x45C
 #define APBDEV_PMC_IO_DPD4_REQ       0x464
 #define APBDEV_PMC_UTMIP_PAD_CFG1    0x4C4
@@ -147,6 +155,8 @@
 #define APBDEV_PMC_SCRATCH188        0x810
 #define APBDEV_PMC_SCRATCH190        0x818
 #define APBDEV_PMC_SCRATCH200        0x840
+#define  PMC_NX_PANIC_SAFE_MODE            0x20
+#define  PMC_NX_PANIC_BYPASS_FUSES         0x21
 #define APBDEV_PMC_SCRATCH201        0x844
 #define APBDEV_PMC_SCRATCH250        0x908
 #define APBDEV_PMC_SECURE_SCRATCH108 0xB08
@@ -177,6 +187,12 @@
 #define  PMC_LED_BREATHING_COUNTER_HZ               32768
 #define APBDEV_PMC_LED_BREATHING_STATUS       0xB5C
 #define  PMC_LED_BREATHING_FSM_STATUS_MASK          0x7
+#define  PMC_LED_BREATHING_FSM_STS_IDLE             0
+#define  PMC_LED_BREATHING_FSM_STS_UP_RAMP          1
+#define  PMC_LED_BREATHING_FSM_STS_PLATEAU          2
+#define  PMC_LED_BREATHING_FSM_STS_DOWN_RAMP        3
+#define  PMC_LED_BREATHING_FSM_STS_SHORT_LOW_PERIOD 4
+#define  PMC_LED_BREATHING_FSM_STS_LONG_LOW_PERIOD  5
 #define APBDEV_PMC_TZRAM_PWR_CNTRL            0xBE8
 #define  PMC_TZRAM_PWR_CNTRL_SD                     BIT(0)
 #define APBDEV_PMC_TZRAM_SEC_DISABLE          0xBEC
@@ -204,19 +220,14 @@ typedef enum _pmc_sec_lock_t
 typedef enum _pmc_power_rail_t
 {
 	POWER_RAIL_CRAIL = 0,
-	POWER_RAIL_3D0   = 1,
-	POWER_RAIL_VENC  = 2,
+	POWER_RAIL_VE    = 2,
 	POWER_RAIL_PCIE  = 3,
-	POWER_RAIL_VDEC  = 4,
-	POWER_RAIL_L2C   = 5,
-	POWER_RAIL_MPE   = 6,
-	POWER_RAIL_HEG   = 7,
+	POWER_RAIL_NVENC = 6,
 	POWER_RAIL_SATA  = 8,
 	POWER_RAIL_CE1   = 9,
 	POWER_RAIL_CE2   = 10,
 	POWER_RAIL_CE3   = 11,
 	POWER_RAIL_CELP  = 12,
-	POWER_RAIL_3D1   = 13,
 	POWER_RAIL_CE0   = 14,
 	POWER_RAIL_C0NC  = 15,
 	POWER_RAIL_C1NC  = 16,
@@ -236,6 +247,6 @@ typedef enum _pmc_power_rail_t
 } pmc_power_rail_t;
 
 void pmc_scratch_lock(pmc_sec_lock_t lock_mask);
-int  pmc_enable_partition(pmc_power_rail_t part, u32 enable);
+int  pmc_domain_pwrgate_set(pmc_power_rail_t part, u32 enable);
 
 #endif

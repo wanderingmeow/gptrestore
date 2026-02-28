@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2023 CTCaer
+ * Copyright (c) 2018-2025 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -23,9 +23,9 @@
 
 /*! SDMMC controller IDs. */
 #define SDMMC_1 0 // Version 4.00.
-#define SDMMC_2 1 // Version 5.1.
+#define SDMMC_2 1 // Version 5.0 + SW CQE + Enhanced Strobe.
 #define SDMMC_3 2 // Version 4.00.
-#define SDMMC_4 3 // Version 5.1.
+#define SDMMC_4 3 // Version 5.0 + SW CQE + Enhanced Strobe.
 
 /*! SDMMC power types. */
 #define SDMMC_POWER_OFF 0
@@ -37,8 +37,8 @@
 #define SDMMC_RSP_TYPE_1 1
 #define SDMMC_RSP_TYPE_2 2
 #define SDMMC_RSP_TYPE_3 3
-#define SDMMC_RSP_TYPE_4 4
-#define SDMMC_RSP_TYPE_5 5
+#define SDMMC_RSP_TYPE_6 4
+#define SDMMC_RSP_TYPE_7 5
 
 /*! SDMMC bus widths. */
 #define SDMMC_BUS_WIDTH_1 0
@@ -101,6 +101,7 @@
 #define SDHCI_CMD_TYPE_SUSPEND    (1U << 6)
 #define SDHCI_CMD_TYPE_RESUME     (2U << 6)
 #define SDHCI_CMD_TYPE_ABORT      (3U << 6)
+#define SDHCI_CMD_SPI_CS_LOW      BIT(7)
 #define SDHCI_CMD_IDX(cmd)        ((cmd) << 8)
 
 
@@ -170,10 +171,10 @@
 #define SDHCI_INT_ERROR        BIT(15)
 
 /*! SDMMC error interrupt status and control. 0x32/0x36. */
-#define SDHCI_ERR_INT_TIMEOUT      BIT(0)
-#define SDHCI_ERR_INT_CRC          BIT(1)
-#define SDHCI_ERR_INT_END_BIT      BIT(2)
-#define SDHCI_ERR_INT_INDEX        BIT(3)
+#define SDHCI_ERR_INT_CMD_TIMEOUT  BIT(0)
+#define SDHCI_ERR_INT_CMD_CRC      BIT(1)
+#define SDHCI_ERR_INT_CMD_END_BIT  BIT(2)
+#define SDHCI_ERR_INT_CMD_INDEX    BIT(3)
 #define SDHCI_ERR_INT_DATA_TIMEOUT BIT(4)
 #define SDHCI_ERR_INT_DATA_CRC     BIT(5)
 #define SDHCI_ERR_INT_DATA_END_BIT BIT(6)
@@ -190,8 +191,8 @@
 #define SDHCI_ERR_INT_ALL_EXCEPT_ADMA_BUSPWR \
 	(SDHCI_ERR_INT_AUTO_CMD12 | SDHCI_ERR_INT_DATA_END_BIT | \
 	 SDHCI_ERR_INT_DATA_CRC   | SDHCI_ERR_INT_DATA_TIMEOUT | \
-	 SDHCI_ERR_INT_INDEX      | SDHCI_ERR_INT_END_BIT | \
-	 SDHCI_ERR_INT_CRC        | SDHCI_ERR_INT_TIMEOUT)
+	 SDHCI_ERR_INT_CMD_INDEX  | SDHCI_ERR_INT_CMD_END_BIT  | \
+	 SDHCI_ERR_INT_CMD_CRC    | SDHCI_ERR_INT_CMD_TIMEOUT)
 
 /*! Host Capability 1. 0x40. */
 #define SDHCI_CAP_TM_CLK_FREQ_MASK    0x3F
@@ -273,8 +274,9 @@
 /*! Helper for SWITCH command argument. */
 #define SDMMC_SWITCH(mode, index, value) (((mode) << 24) | ((index) << 16) | ((value) << 8))
 
-#define HW_TAP_TUNING 0x100
-#define INVALID_TAP   0x100
+#define HW_TAP_TUNING            0x100
+#define INVALID_TAP              0x100
+#define SAMPLING_WINDOW_SIZE_MIN 8
 
 /*! SDMMC controller context. */
 typedef struct _sdmmc_t
@@ -284,14 +286,15 @@ typedef struct _sdmmc_t
 	u32 card_clock;
 	u32 clock_stopped;
 	int powersave_enabled;
-	int manual_cal;
+	int periodic_calibration;
 	int card_clock_enabled;
 	int venclkctl_set;
 	u32 venclkctl_tap;
 	u32 expected_rsp_type;
 	u32 dma_addr_next;
 	u32 rsp[4];
-	u32 rsp3;
+	u32 stop_trn_rsp;
+	u32 error_sts;
 	int t210b01;
 } sdmmc_t;
 
@@ -322,7 +325,7 @@ void sdmmc_save_tap_value(sdmmc_t *sdmmc);
 void sdmmc_setup_drv_type(sdmmc_t *sdmmc, u32 type);
 int  sdmmc_setup_clock(sdmmc_t *sdmmc, u32 type);
 void sdmmc_card_clock_powersave(sdmmc_t *sdmmc, int powersave_enable);
-int  sdmmc_get_rsp(sdmmc_t *sdmmc, u32 *rsp, u32 size, u32 type);
+int  sdmmc_get_cached_rsp(sdmmc_t *sdmmc, u32 *rsp, u32 type);
 int  sdmmc_tuning_execute(sdmmc_t *sdmmc, u32 type, u32 cmd);
 int  sdmmc_stop_transmission(sdmmc_t *sdmmc, u32 *rsp);
 bool sdmmc_get_sd_inserted();

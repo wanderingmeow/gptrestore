@@ -20,8 +20,6 @@
 #include "tui.h"
 #include "../config.h"
 
-extern hekate_config h_cfg;
-
 void tui_sbar(bool force_update)
 {
 	u32 cx, cy;
@@ -141,6 +139,8 @@ void *tui_do_menu(menu_t *menu)
 		gfx_putc('\n');
 
 		// Print errors, help and battery status.
+		gfx_con_setpos(0,  1127);
+		gfx_printf("%k Warning: %kNyx is missing!", TXT_CLR_RED_D, TXT_CLR_GREY_M);
 		gfx_con_setpos(0,  1191);
 		gfx_printf("%k VOL: Move up/down\n PWR: Select option%k", TXT_CLR_GREY_M, TXT_CLR_DEFAULT);
 

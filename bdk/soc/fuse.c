@@ -2,7 +2,7 @@
  * Copyright (c) 2018 naehrwert
  * Copyright (c) 2018 shuffle2
  * Copyright (c) 2018 balika011
- * Copyright (c) 2019-2022 CTCaer
+ * Copyright (c) 2019-2025 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -22,9 +22,12 @@
 #include <mem/heap.h>
 #include <sec/se.h>
 #include <sec/se_t210.h>
+#include <soc/clock.h>
 #include <soc/fuse.h>
 #include <soc/hw_init.h>
+#include <soc/pmc.h>
 #include <soc/t210.h>
+#include <soc/timer.h>
 #include <utils/types.h>
 
 static const u32 evp_thunk_template[] = {
@@ -86,6 +89,14 @@ u32 fuse_read_odm_keygen_rev()
 	return 0;
 }
 
+static bool _dramid_8gb = false;
+
+void fuse_force_8gb_dramid()
+{
+	// Override fuse DRAM ID with a 8GB ID.
+	_dramid_8gb = true;
+}
+
 u32 fuse_read_dramid(bool raw_id)
 {
 	bool tegra_t210 = hw_get_chip_id() == GP_HIDREV_MAJOR_T210;
@@ -102,13 +113,19 @@ u32 fuse_read_dramid(bool raw_id)
 
 	if (tegra_t210)
 	{
-		if (dramid > 6)
+		if (dramid > 7)
 			dramid = 0;
+
+		if (_dramid_8gb)
+			dramid = 7;
 	}
 	else
 	{
 		if (dramid > 34)
 			dramid = 8;
+
+		if (_dramid_8gb)
+			dramid = 28;
 	}
 
 	return dramid;
@@ -167,32 +184,51 @@ int fuse_set_sbk()
 
 void fuse_wait_idle()
 {
-	u32 ctrl;
-	do
-	{
-		ctrl = FUSE(FUSE_CTRL);
-	} while (((ctrl >> 16) & 0x1f) != 4);
+	while (((FUSE(FUSE_CTRL) >> 16) & 0x1F) != FUSE_STATUS_IDLE)
+		;
+}
+
+void fuse_sense()
+{
+	clock_enable_fuse(false);
+
+	FUSE(FUSE_CTRL) = (FUSE(FUSE_CTRL) & (~FUSE_CMD_MASK)) | FUSE_SENSE;
+	usleep(1);
+
+	fuse_wait_idle();
+
+	FUSE(FUSE_PRIV2INTFC) = FUSE_PRIV2INTFC_SKIP_RECORDS | FUSE_PRIV2INTFC_START_DATA;
+	usleep(1);
+
+	while (!(FUSE(FUSE_CTRL) & BIT(30)) || ((FUSE(FUSE_CTRL) >> 16) & 0x1F) != FUSE_STATUS_IDLE)
+		;
+
+
+  	clock_enable_fuse(true);
 }
 
 u32 fuse_read(u32 addr)
 {
 	FUSE(FUSE_ADDR) = addr;
-	FUSE(FUSE_CTRL) = (FUSE(FUSE_ADDR) & ~FUSE_CMD_MASK) | FUSE_READ;
+	FUSE(FUSE_CTRL) = (FUSE(FUSE_CTRL) & ~FUSE_CMD_MASK) | FUSE_READ;
+
 	fuse_wait_idle();
 
 	return FUSE(FUSE_RDATA);
 }
 
-void fuse_read_array(u32 *words)
+u32 fuse_read_array(u32 *words)
 {
 	u32 array_size = (hw_get_chip_id() == GP_HIDREV_MAJOR_T210B01) ?
-					 FUSE_ARRAY_WORDS_NUM_T210B01 : FUSE_ARRAY_WORDS_NUM;
+					 FUSE_ARRAY_WORDS_NUM_B01 : FUSE_ARRAY_WORDS_NUM;
 
 	for (u32 i = 0; i < array_size; i++)
 		words[i] = fuse_read(i);
+
+	return array_size;
 }
 
-static u32 _parity32_even(u32 *words, u32 count)
+static u32 _parity32_even(const u32 *words, u32 count)
 {
 	u32 acc = words[0];
 	for (u32 i = 1; i < count; i++)
@@ -306,7 +342,7 @@ int fuse_read_ipatch(void (*ipatch)(u32 offset, u32 value))
 	u32 words[80];
 	u32 word_count;
 	u32 word_addr;
-	u32 word0 = 0;
+	u32 word0;
 	u32 total_read = 0;
 
 	word_count = FUSE(FUSE_FIRST_BOOTROM_PATCH_SIZE);
@@ -325,9 +361,9 @@ int fuse_read_ipatch(void (*ipatch)(u32 offset, u32 value))
 			// Parse extra T210B01 fuses when the difference is reached.
 			if (hw_get_chip_id() == GP_HIDREV_MAJOR_T210B01 &&
 				word_addr == ((FUSE_ARRAY_WORDS_NUM - 1) -
-							  (FUSE_ARRAY_WORDS_NUM_T210B01 - FUSE_ARRAY_WORDS_NUM) / sizeof(u32)))
+							  (FUSE_ARRAY_WORDS_NUM_B01 - FUSE_ARRAY_WORDS_NUM) / sizeof(u32)))
 			{
-				word_addr = FUSE_ARRAY_WORDS_NUM_T210B01 - 1;
+				word_addr = FUSE_ARRAY_WORDS_NUM_B01 - 1;
 			}
 		}
 
@@ -366,7 +402,7 @@ int fuse_read_evp_thunk(u32 *iram_evp_thunks, u32 *iram_evp_thunks_len)
 	u32 words[80];
 	u32 word_count;
 	u32 word_addr;
-	u32 word0 = 0;
+	u32 word0;
 	u32 total_read = 0;
 	int evp_thunk_written = 0;
 	void *evp_thunk_dst_addr = 0;
@@ -395,9 +431,9 @@ int fuse_read_evp_thunk(u32 *iram_evp_thunks, u32 *iram_evp_thunks_len)
 			// Parse extra T210B01 fuses when the difference is reached.
 			if (hw_get_chip_id() == GP_HIDREV_MAJOR_T210B01 &&
 				word_addr == ((FUSE_ARRAY_WORDS_NUM - 1) -
-							  (FUSE_ARRAY_WORDS_NUM_T210B01 - FUSE_ARRAY_WORDS_NUM) / sizeof(u32)))
+							  (FUSE_ARRAY_WORDS_NUM_B01 - FUSE_ARRAY_WORDS_NUM) / sizeof(u32)))
 			{
-				word_addr = FUSE_ARRAY_WORDS_NUM_T210B01 - 1;
+				word_addr = FUSE_ARRAY_WORDS_NUM_B01 - 1;
 			}
 		}
 

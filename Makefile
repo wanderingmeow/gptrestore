@@ -14,6 +14,7 @@ include ./Versions.inc
 
 TARGET := gptrestore
 BUILDDIR := build
+BUILDTDIR := build/$(TARGET)
 OUTPUTDIR := output
 SOURCEDIR = source
 BDKDIR := bdk
@@ -22,37 +23,30 @@ VPATH = $(dir ./$(SOURCEDIR)/) $(dir $(wildcard ./$(SOURCEDIR)/*/)) $(dir $(wild
 VPATH += $(dir $(wildcard ./$(BDKDIR)/)) $(dir $(wildcard ./$(BDKDIR)/*/)) $(dir $(wildcard ./$(BDKDIR)/*/*/))
 VPATH += $(dir $(wildcard ./$()))
 
+# Track compiler flags
+TRACK_CFLAGS = $(BUILDTDIR)/.cflags
+TRACK_LDFLAGS = $(BUILDTDIR)/.ldflags
+
 # Main and graphics.
-OBJS = $(addprefix $(BUILDDIR)/$(TARGET)/, \
-	start.o exception_handlers.o \
-	main.o heap.o \
-	gfx.o tui.o \
-)
+OBJS =  start exception_handlers main heap gfx logos tui
 
 # Hardware.
-OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
-	bpmp.o ccplex.o clock.o di.o i2c.o irq.o timer.o \
-	mc.o sdram.o minerva.o \
-	gpio.o pinmux.o pmc.o se.o smmu.o tsec.o uart.o \
-	fuse.o kfuse.o \
-	sdmmc.o sdmmc_driver.o emmc.o sd.o \
-	bq24193.o max17050.o max7762x.o max77620-rtc.o \
-	hw_init.o \
-)
+OBJS += bpmp ccplex clock di i2c irq timer \
+		mc sdram minerva smmu \
+		gpio pinmux pmc se tsec uart \
+		fuse kfuse \
+		sdmmc sdmmc_driver emmc sd \
+		bq24193 max17050 max7762x max77620-rtc \
+		hw_init
 
 # Utilities.
-OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
-	btn.o dirlist.o ianos.o util.o \
-	config.o ini.o \
-)
+OBJS += btn dirlist ianos ini util config
 
 # Libraries.
-OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
-	lz.o lz4.o blz.o \
-	diskio.o ff.o ffunicode.o ffsystem.o \
-	elfload.o elfreloc_arm.o \
-	gpt.o \
-)
+OBJS += lz lz4 blz diskio ff ffunicode ffsystem elfload elfreloc_arm gpt
+
+OBJS := $(addsuffix .o, $(OBJS))
+OBJS := $(addprefix $(BUILDTDIR)/, $(OBJS))
 
 GFX_INC   := '"../$(SOURCEDIR)/gfx/gfx.h"'
 FFCFG_INC := '"../$(SOURCEDIR)/libs/fatfs/ffconf.h"'
@@ -60,11 +54,11 @@ FFCFG_INC := '"../$(SOURCEDIR)/libs/fatfs/ffconf.h"'
 ################################################################################
 
 CUSTOMDEFINES := -DIPL_LOAD_ADDR=$(IPL_LOAD_ADDR) -DBL_MAGIC=$(IPL_MAGIC)
-CUSTOMDEFINES += -DBL_VER_MJ=$(BLVERSION_MAJOR) -DBL_VER_MN=$(BLVERSION_MINOR) -DBL_VER_HF=$(BLVERSION_HOTFX) -DBL_RESERVED=$(BLVERSION_RSVD)
-CUSTOMDEFINES += -DNYX_VER_MJ=$(NYXVERSION_MAJOR) -DNYX_VER_MN=$(NYXVERSION_MINOR) -DNYX_VER_HF=$(NYXVERSION_HOTFX) -DNYX_RESERVED=$(NYXVERSION_RSVD)
+CUSTOMDEFINES += -DBL_VER_MJ=$(BLVERSION_MAJOR) -DBL_VER_MN=$(BLVERSION_MINOR) -DBL_VER_HF=$(BLVERSION_HOTFX) -DBL_VER_RL=$(BLVERSION_REL)
+CUSTOMDEFINES += -DNYX_VER_MJ=$(NYXVERSION_MAJOR) -DNYX_VER_MN=$(NYXVERSION_MINOR) -DNYX_VER_HF=$(NYXVERSION_HOTFX) -DNYX_VER_RL=$(NYXVERSION_REL)
 
 # BDK defines.
-CUSTOMDEFINES += -DBDK_MALLOC_NO_DEFRAG -DBDK_MC_ENABLE_AHB_REDIRECT #-DBDK_EMUMMC_ENABLE
+CUSTOMDEFINES += -DBDK_MALLOC_NO_DEFRAG -DBDK_MC_ENABLE_AHB_REDIRECT
 CUSTOMDEFINES += -DBDK_WATCHDOG_FIQ_ENABLE -DBDK_RESTART_BL_ON_WDT
 CUSTOMDEFINES += -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
 
@@ -72,21 +66,29 @@ CUSTOMDEFINES += -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
 
 # UART Logging: Max baudrate 12.5M.
 # DEBUG_UART_PORT - 0: UART_A, 1: UART_B, 2: UART_C.
-#CUSTOMDEFINES += -DDEBUG_UART_BAUDRATE=115200 -DDEBUG_UART_INVERT=0 -DDEBUG_UART_PORT=0
+#CUSTOMDEFINES += -DDEBUG_UART_BAUDRATE=115200 -DDEBUG_UART_INVERT=0 -DDEBUG_UART_PORT=1
 
 #TODO: Considering reinstating some of these when pointer warnings have been fixed.
-WARNINGS := -Wall -Wsign-compare -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
+WARNINGS := -Wall -Wsign-compare -Wtype-limits -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
 #-fno-delete-null-pointer-checks
 #-Wstack-usage=byte-size -fstack-usage
 
-ARCH := -march=armv4t -mtune=arm7tdmi -mthumb -mthumb-interwork
-CFLAGS = $(ARCH) -Os -g -gdwarf-4 -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-inline -std=gnu11 $(WARNINGS) $(CUSTOMDEFINES)
+ARCH := -march=armv4t -mtune=arm7tdmi -mthumb -mthumb-interwork $(WARNINGS)
+CFLAGS = $(ARCH) -Os -g -gdwarf-4 -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-inline -std=gnu11 $(CUSTOMDEFINES)
 LDFLAGS = $(ARCH) -nostartfiles -lgcc -Wl,--nmagic,--gc-sections -Xlinker --defsym=IPL_LOAD_ADDR=$(IPL_LOAD_ADDR)
 
 LDRDIR := $(wildcard loader)
 TOOLSLZ := $(wildcard tools/lz)
 TOOLSB2C := $(wildcard tools/bin2c)
 TOOLS := $(TOOLSLZ) $(TOOLSB2C)
+
+ifndef IPLECHO
+T := $(shell $(MAKE) $(BUILDTDIR)/$(TARGET).elf --no-print-directory -nrRf $(firstword $(MAKEFILE_LIST)) IPLECHO="IPLOBJ" | grep -c "IPLOBJ")
+
+N := x
+C = $(words $N)$(eval N := x $N)
+IPLECHO = echo -ne "\r`expr "  [\`expr $C '*' 100 / $T\`" : '.*\(....\)$$'`%]\033[K"
+endif
 
 ################################################################################
 
@@ -95,26 +97,25 @@ TOOLS := $(TOOLSLZ) $(TOOLSB2C)
 all: $(TARGET).bin $(LDRDIR)
 	@printf ICTC49 >> $(OUTPUTDIR)/$(TARGET).bin
 	@echo "--------------------------------------"
-	@echo -n "Uncompr size: "
+	@echo "$(TARGET) size:"
+	@echo -n "Uncompr:  "
 	$(eval BIN_SIZE = $(shell wc -c < $(OUTPUTDIR)/$(TARGET)_unc.bin))
 	@echo $(BIN_SIZE)" Bytes"
-	@echo "Uncompr Max:  140288 Bytes + 3 KiB BSS"
 	@if [ ${BIN_SIZE} -gt 140288 ]; then echo "\e[1;33mUncompr size exceeds limit!\e[0m"; fi
-	@echo -n "Payload size: "
+	@echo -n "Payload:  "
 	$(eval BIN_SIZE = $(shell wc -c < $(OUTPUTDIR)/$(TARGET).bin))
 	@echo $(BIN_SIZE)" Bytes"
-	@echo "Payload Max:  126296 Bytes"
 	@if [ ${BIN_SIZE} -gt 126296 ]; then echo "\e[1;33mPayload size exceeds limit!\e[0m"; fi
 	@echo "--------------------------------------"
 
 clean: $(TOOLS)
-	@rm -rf $(OBJS)
 	@rm -rf $(BUILDDIR)
 	@rm -rf $(OUTPUTDIR)
+	@$(MAKE) --no-print-directory -C $(LDRDIR) $(MAKECMDGOALS) -$(MAKEFLAGS)
 
-$(LDRDIR): $(TARGET).bin
+$(LDRDIR): $(TARGET).bin $(TOOLS) $(NYXDIR) $(MODULEDIRS)
 	@$(TOOLSLZ)/lz77 $(OUTPUTDIR)/$(TARGET).bin
-	mv $(OUTPUTDIR)/$(TARGET).bin $(OUTPUTDIR)/$(TARGET)_unc.bin
+	@mv $(OUTPUTDIR)/$(TARGET).bin $(OUTPUTDIR)/$(TARGET)_unc.bin
 	@mv $(OUTPUTDIR)/$(TARGET).bin.00.lz payload_00
 	@mv $(OUTPUTDIR)/$(TARGET).bin.01.lz payload_01
 	@$(TOOLSB2C)/bin2c payload_00 > $(LDRDIR)/payload_00.h
@@ -126,24 +127,31 @@ $(LDRDIR): $(TARGET).bin
 $(TOOLS):
 	@$(MAKE) --no-print-directory -C $@ $(MAKECMDGOALS) -$(MAKEFLAGS)
 
-$(TARGET).bin: $(BUILDDIR)/$(TARGET)/$(TARGET).elf $(TOOLS)
-	$(OBJCOPY) -S -O binary $< $(OUTPUTDIR)/$@
+$(TARGET).bin: $(BUILDTDIR)/$(TARGET).elf
+	@$(OBJCOPY) -S -O binary $< $(OUTPUTDIR)/$@
+	@echo --------------------------------------
 
-$(BUILDDIR)/$(TARGET)/$(TARGET).elf: $(OBJS)
-	@$(CC) $(LDFLAGS) -T $(SOURCEDIR)/link.ld $^ -o $@
-	@echo "$(TARGET) was built with the following flags:\nCFLAGS:  "$(CFLAGS)"\nLDFLAGS: "$(LDFLAGS)
+$(BUILDTDIR)/$(TARGET).elf: $(OBJS) $(TRACK_LDFLAGS)
+	@echo -ne "\r[100%] Linking $(TARGET).elf\033[K"
+	@$(CC) $(LDFLAGS) -T $(SOURCEDIR)/link.ld $(OBJS) -o $@
+	@printf "\n$(TARGET) was built with the following flags:\nCFLAGS:  $(CFLAGS)\nLDFLAGS: $(LDFLAGS)\n"
 
-$(BUILDDIR)/$(TARGET)/%.o: %.c
-	@echo Building $@
-	@$(CC) $(CFLAGS) $(BDKINC) -c $< -o $@
+$(BUILDTDIR)/%.o: %.c $(TRACK_CFLAGS) | $(BUILDTDIR)
+	@$(IPLECHO) Building $@
+	@$(CC) $(CFLAGS) $(BDKINC) -MMD -MP -c $< -o $@
 
-$(BUILDDIR)/$(TARGET)/%.o: %.S
-	@echo Building $@
-	@$(CC) $(CFLAGS) -c $< -o $@
+$(BUILDTDIR)/%.o: %.S $(TRACK_CFLAGS) | $(BUILDTDIR)
+	@$(IPLECHO) Building $@
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(OBJS): $(BUILDDIR)/$(TARGET)
-
-$(BUILDDIR)/$(TARGET):
+$(BUILDTDIR):
 	@mkdir -p "$(BUILDDIR)"
-	@mkdir -p "$(BUILDDIR)/$(TARGET)"
+	@mkdir -p "$(BUILDTDIR)"
 	@mkdir -p "$(OUTPUTDIR)"
+
+# Non objects change detectors.
+$(TRACK_CFLAGS): $(BUILDTDIR)
+	@echo '$(CFLAGS)' | cmp -s - $@ || echo '$(CFLAGS)' > $@
+$(TRACK_LDFLAGS): $(BUILDTDIR)
+	@echo '$(LDFLAGS)' | cmp -s - $@ || echo '$(LDFLAGS)' > $@
+-include $(OBJS:.o=.d)

@@ -4,7 +4,7 @@
  * Copyright (c) 2003-2008 Alan Stern
  * Copyright (c) 2009 Samsung Electronics
  *                    Author: Michal Nazarewicz <m.nazarewicz@samsung.com>
- * Copyright (c) 2019-2023 CTCaer
+ * Copyright (c) 2019-2024 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -285,7 +285,7 @@ static void raise_exception(usbd_gadget_ums_t *ums, enum ums_state new_state)
 
 static void _handle_ep0_ctrl(usbd_gadget_ums_t *ums)
 {
-	if (usb_ops.usbd_handle_ep0_ctrl_setup())
+	if (usb_ops.usbd_handle_ep0_ctrl_setup(NULL))
 		raise_exception(ums, UMS_STATE_PROTOCOL_RESET);
 }
 
@@ -1842,10 +1842,11 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 	ums.bulk_ctxt.bulk_out_buf = (u8 *)USB_EP_BULK_OUT_BUF_ADDR;
 
 	// Set LUN parameters.
-	ums.lun.ro        = usbs->ro;
-	ums.lun.type      = usbs->type;
-	ums.lun.partition = usbs->partition;
-	ums.lun.offset    = usbs->offset;
+	ums.lun.ro          = usbs->ro;
+	ums.lun.type        = usbs->type;
+	ums.lun.partition   = usbs->partition;
+	ums.lun.num_sectors = usbs->sectors;
+	ums.lun.offset      = usbs->offset;
 	ums.lun.removable = 1; // Always removable to force OSes to use prevent media removal.
 	ums.lun.unit_attention_data = SS_RESET_OCCURRED;
 
@@ -1898,10 +1899,14 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 
 	ums.set_text(ums.label, "#C7EA46 Status:# Started UMS");
 
-	if (usbs->sectors)
-		ums.lun.num_sectors = usbs->sectors;
-	else
-		ums.lun.num_sectors = ums.lun.storage->sec_cnt;
+	// If partition sectors are not set get them from hardware.
+	if (!ums.lun.num_sectors)
+	{
+		if (usbs->type == MMC_EMMC && (ums.lun.partition - 1)) // eMMC BOOT0/1.
+			ums.lun.num_sectors = emmc_storage.ext_csd.boot_mult << 8;
+		else
+			ums.lun.num_sectors = ums.lun.storage->sec_cnt;   // eMMC GPP or SD.
+	}
 
 	do
 	{
@@ -1931,7 +1936,9 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 
 		_handle_ep0_ctrl(&ums);
 
-		if (_parse_scsi_cmd(&ums, &ums.bulk_ctxt) || (ums.state > UMS_STATE_NORMAL))
+		_parse_scsi_cmd(&ums, &ums.bulk_ctxt);
+
+		if (ums.state > UMS_STATE_NORMAL)
 			continue;
 
 		_handle_ep0_ctrl(&ums);

@@ -227,7 +227,7 @@ static void _sd_deinit(bool deinit)
 	if (sd_init_done)
 	{
 		if (sd_mounted)
-			f_mount(NULL, "0:", 1); // Volume 0 is SD.
+			f_unmount("0:"); // Volume 0 is SD.
 
 		if (deinit)
 		{
@@ -274,7 +274,7 @@ void *sd_file_read(const char *path, u32 *fsize)
 	return buf;
 }
 
-int sd_save_to_file(void *buf, u32 size, const char *filename)
+int sd_save_to_file(const void *buf, u32 size, const char *filename)
 {
 	FIL fp;
 	u32 res = 0;
