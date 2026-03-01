@@ -43,7 +43,8 @@ OBJS += bpmp ccplex clock di i2c irq timer \
 OBJS += btn dirlist ianos ini util config
 
 # Libraries.
-OBJS += lz lz4 blz diskio ff ffunicode ffsystem elfload elfreloc_arm gpt
+OBJS += lz lz4 blz diskio ff ffunicode ffsystem elfload elfreloc_arm \
+		gptr_core gptr_storage gptr_ui
 
 OBJS := $(addsuffix .o, $(OBJS))
 OBJS := $(addprefix $(BUILDTDIR)/, $(OBJS))

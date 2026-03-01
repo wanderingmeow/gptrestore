@@ -30,7 +30,7 @@
 #include <libs/compr/blz.h>
 #include <libs/fatfs/ff.h>
 
-#include "libs/gptrestore/gpt.h"
+#include "libs/gptrestore/gptr.h"
 
 hekate_config h_cfg;
 boot_cfg_t __attribute__((section ("._boot_cfg"))) b_cfg;
@@ -454,8 +454,8 @@ power_state_t STATE_REBOOT_RCM          = REBOOT_RCM;
 power_state_t STATE_REBOOT_BYPASS_FUSES = REBOOT_BYPASS_FUSES;
 
 ment_t ment_top[] = {
-	MDEF_HANDLER("Check GPT table errors", run_check),
-	MDEF_HANDLER("Restore GPT table", run_restore),
+	MDEF_HANDLER("Check GPT table errors", gptr_check),
+	MDEF_HANDLER("Restore GPT table", gptr_restore),
 	MDEF_CAPTION("---------------", TXT_CLR_GREY_DM),
 	MDEF_HANDLER("Payloads...",  _launch_payloads),
 	MDEF_HANDLER("Reboot to hekate", _launch_hekate),
@@ -537,7 +537,6 @@ void ipl_main()
 	while (true)
 		tui_do_menu(&menu_top);
 
-	clear_gptrestore();
 	// Halt BPMP if we managed to get out of execution.
 	while (true)
 		bpmp_halt();
