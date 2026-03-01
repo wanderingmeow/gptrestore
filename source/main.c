@@ -466,7 +466,7 @@ ment_t ment_top[] = {
 	MDEF_END()
 };
 
-menu_t menu_top = { ment_top, "GPT Restore 1.0.0", 0, 0 };
+menu_t menu_top = { ment_top, "GPT Restore 1.1.0", 0, 0 };
 
 void disable_menu_item(ment_t *menu)
 {
